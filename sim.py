@@ -229,7 +229,19 @@ def read_binary(filename = '../data/test') :
 	return data
 
 
-def spectrum(data, Fs = 3e9, fft_len=1e-3) :
+def spectrum(data, Fs = 3e9, fft_len=1e-3, scaling = 'spectrum') :
+
+	'''calculate the spectrum of sampled data in a given rectangular window
+	input:
+	data
+	Fs
+	fft_len
+	scaling
+
+	output/return:
+	frequency bins
+	power values
+	'''
 
 	# how do we calculate the spectrum?
 	# average over many windows? (this could be improved from last time with a generator expression i think)
@@ -243,7 +255,7 @@ def spectrum(data, Fs = 3e9, fft_len=1e-3) :
 	print("length of data is", len(data), "\n")
 
 	#Freq_Bins, Power = welch(x=data, fs=Fs, window='hanning', nperseg=2**8, noverlap=None, nfft=fft_npt, detrend='constant', return_onesided=True, scaling='density')
-	Freq_Bins, Power = periodogram(x=data, fs=Fs, window=None, nfft=fft_npt, return_onesided=True, scaling='density')
+	Freq_Bins, Power = periodogram(x=data, fs=Fs, window=None, nfft=fft_npt, return_onesided=True, scaling=scaling)
 
 	return Freq_Bins, Power
 
