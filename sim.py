@@ -14,6 +14,7 @@ from matplotlib import axes
 ax_obj = axes.Axes
 
 
+
 def main(*args, **kwargs) :
 	''' do a simulation of the effect of phase noise induced on the clock sampling signal onto the measurement
 	of the RMS distribution of the amplitude'''
@@ -225,17 +226,21 @@ def write_binary(data, filename = '../data/test') :
 	data.tofile(filename, sep="")
 
 def read_binary(filename = '../data/test') :
-	data = np.fromfile(filename, dtype=float, count=-1, sep="")
+	'''
+	this reads a binary file interpreted as series of 16bit integers, as is the case for our ADC's binary codes
+	'''
+	data = np.fromfile(filename, dtype=np.int16, count=-1, sep="")
 	return data
 
 
-def spectrum(data, Fs = 3e9, fft_len=1e-3, scaling = 'spectrum') :
+def spectrum(data, Fs = 3e9, fft_len=1e-3, npt=None, scaling = 'density') :
 
 	'''calculate the spectrum of sampled data in a given rectangular window
 	input:
 	data
 	Fs
 	fft_len
+	npt ** use to override fft_len, so we can use a specific number instead of using Fs and fft_len in time.
 	scaling
 
 	output/return:
@@ -250,9 +255,13 @@ def spectrum(data, Fs = 3e9, fft_len=1e-3, scaling = 'spectrum') :
 	
 	# limit FFT to each integration window, since this is the only spectrum we actually get in the 
 	# physical measurement because of the helicity flip rate set at the accelerator.
-	fft_npt = int(fft_len/Ts)
-	print("number of fft points is", fft_npt, "\n")
-	print("length of data is", len(data), "\n")
+	
+	if npt :
+		fft_npt = npt
+	else :
+		fft_npt = int(fft_len/Ts)
+		print("number of fft points is", fft_npt, "\n")
+		print("length of data is", len(data), "\n")
 
 	#Freq_Bins, Power = welch(x=data, fs=Fs, window='hanning', nperseg=2**8, noverlap=None, nfft=fft_npt, detrend='constant', return_onesided=True, scaling='density')
 	Freq_Bins, Power = periodogram(x=data, fs=Fs, window=None, nfft=fft_npt, return_onesided=True, scaling=scaling)

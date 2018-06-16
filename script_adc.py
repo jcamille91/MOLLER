@@ -1,99 +1,127 @@
 import sim as s
 import numpy as np
 from scipy.integrate import trapz
+from scipy.signal import periodogram
 import matplotlib.pyplot as plt
 
 # this function takes binary codes from the ADC32RF45 and produces a spectrum.
 
 # ADC input voltage is the output code (16bit integer) * LSB
-# The Least Significant Nit is the full scale range divided by the number of available total bits
+# The Least Significant Bit is the full scale range divided by the number of available total bits (12 or 14 depending on mode)
 lsb_adc = 1.35/(2**12)
+fsr = 1.35
+maxcode = (2**12)-1
 
-
-Channel = 'A'
-Fo=10e6
+Fo=10e6		
 Fs = 2949.12e6 # ADC32RF45 sampling frequency (from LMX2582 synth)
 Ts= 1/Fs
 
-window=1e-3
-fft_len = int(window/Ts)
 
 scaling = 'density'
-bandwidth = [10**3, 10**9]
+
+
 
 # binary channels are written [A,B]_0, [A,B]_1, [A,B]_2.... etc/
-# to choose a channel one, pick out every other linearly indexed data point
-# if you don't you'll plot both.
-
-if Channel = 'A' :
-	choose = 0
-elif Channel = 'B' :
-	choose = 1
+# to choose a channel pick out every other linearly indexed data point
 
 
+#data = s.read_binary('../ADC_DATA/10Minput_2949.12Msample_bypass_12bit_CHAB_NOSYNC_100ms.bin')
+data = s.read_binary('../ADC_DATA/10Minput_2949.12Msample_bypass_12bit_CHAB_NOSYNC_1ms.bin')
+# data = s.read_binary('../ADC_DATA/10Minput_2949.12Msample_bypass_12bit_CHAB.bin')
 
-if scaling == 'density' :
-	binwidth = Fs/fft_len
+voltage_A = lsb_adc*data[0::2]
+voltage_B = lsb_adc*data[1::2]
 
-elif scaling == 'spectrum' :
+
+if scaling == 'density' : # V^2 / Hz
 	binwidth = 1
 
-data = s.read_binary('../ADC_DATA/10Minput_2949.12Msample_bypass_12bit.bin')
+elif scaling == 'spectrum' : # V^2
+	binwidth = Fs/len(voltage_A)
 
-codes = data[choose::2]
-voltages = codes*lsb_adc
 
-bins, power = s.spectrum(data, Fs = Fs, fft_len=len(data), scaling = scaling)
 
-# from the frequency bins, let's integrate the spectrum to get the total amount of jitter... let's see how close this is to the
-# value we input in the first place.
+# bins_A, power_A = s.spectrum(voltage_A, Fs = Fs, npt=len(voltage_A), scaling = scaling)
+# bins_B, power_B = s.spectrum(voltage_B, Fs = Fs, npt=len(voltage_B), scaling = scaling)
 
-# this spectrum needs to be put into units of dBc/Hz, then converted to integrated dBc, 
-# then we can convert to seconds or radians of jitter. Divide all of the bins by the maximum value.
+bins_A, power_A = periodogram(x=voltage_A, fs=Fs, window=None, nfft=len(voltage_A), return_onesided=True, scaling=scaling)
+bins_B, power_B = periodogram(x=voltage_B, fs=Fs, window=None, nfft=len(voltage_B), return_onesided=True, scaling=scaling)
 
-# we'll do this outside of the function to check if the units are right in the ipython environment.
-# this should be dBc/Hz. The question is if the order of operations matter for the bin scaling.
-ssb_pn = (10*np.log10(power/np.max(power)))
-maxpt = np.argmax(power)
-print("maximum is at", maxpt*binwidth*1e-9, "GHz with V^2 value", power[maxpt])
+power_A = power_A/binwidth
+power_B = power_A/binwidth
+
+pn_lin_A = (power_A/np.max(power_A))
+maxpt_A = np.argmax(power_A)
+pn_lin_B = (power_B/np.max(power_B))
+maxpt_B = np.argmax(power_B)
+
+print("Ch A tone is at", maxpt_A*Fs/len(voltage_A)*1e-6, "MHz")
+print("Ch B tone is at", maxpt_B*Fs/len(voltage_B)*1e-6, "MHz")
+
+# calculate the close in phase noise and broadband phase noise for each channel
+
 
 # replicate MT-008 Analog Devices guide data to verify that integration is working correctly.
 #ssb_pn2 = np.ones()
 
-# now let's convert the phase noise spectrum into an integrated value, then convert that into a jitter value in seconds.
-# we want to integrate over a 1 kilohertz bandwidth to get this number, let's do just the two adjacent bins to the peak...
-# or maybe several to be safe.
-
 integ_pt_off = 10
 integ_pt = np.arange(maxpt, maxpt+integ_pt_off)
-area = (trapz(y=ssb_pn[integ_pt], x=None, dx=1))
-#area += 10*np.log10(bandwidth[1]-bandwidth[0])
+area = 10*np.log10(trapz(y=pn_lin_A[integ_pt], x=None, dx=binwidth))
 jitter = np.sqrt(2*(10**(area/10)))/(2*np.pi*Fo)
 
-print(jitter*1e12,"picoseconds of jitter recovered from integration")
+# print(jitter*1e12,"picoseconds of jitter recovered from integration")
 
-fig, ax = plt.subplots(1,1)
+fig_A, ax_A = plt.subplots(1,1)
 
-ax.set_xlim(1e6, 1e10)
-ax.set_xscale('log')
-#ax.set_yscale('log')
-ax.set_xlabel('Frequency (Hertz)')
-ax.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
-ax.set_title('Phase Noise')
-ax.step(bins, ssb_pn)
+ax_A.set_xlim(1e6, 1e10)
+ax_A.set_xscale('log')
+#ax_A.set_yscale('log')
+ax_A.set_xlabel('Frequency (Hertz)')
+ax_A.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
+ax_A.set_title('CH A Noise Spectral Density')
+ax_A.step(bins_A, 10*np.log10(pn_lin_A))
 
-fig2, ax2 = plt.subplots(1,1)
+fig2_A, ax2_A = plt.subplots(1,1)
 
-ax2.set_xscale('log')
-#ax2.set_ylim()
-ax2.set_xlabel('Frequency Offset (Hz)')
-ax2.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
-ax2.set_title('Phase Noise Spectrum')
-ax2.step(bins[maxpt:]-Fo, ssb_pn[maxpt:])
+ax2_A.set_xscale('log')
+ax2_A.set_xlim(1e3, 1e9)
+#ax2_A.set_ylim()
+ax2_A.set_xlabel('Frequency Offset (Hz)')
+ax2_A.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
+ax2_A.set_title('CH A SSB Phase Noise')
+ax2_A.step(bins_A[maxpt_A:]-Fo, 10*np.log10(pn_lin_A[maxpt_A:]))
 
-#ax2.scatter(integ_pt*1e3, ssb_pn[integ_pt], marker='x', c='r')
+#ax2_A.scatter(integ_pt*1e3, ssb_pn[integ_pt], marker='x', c='r')
 
 
-fig.show()
-fig2.show()
+fig_A.show()
+fig2_A.show()
+
+fig_B, ax_B = plt.subplots(1,1)
+
+ax_B.set_xlim(1e6, 1e10)
+ax_B.set_xscale('log')
+#ax_B.set_yscale('log')
+ax_B.set_xlabel('Frequency (Hertz)')
+ax_B.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
+ax_B.set_title('CH B Noise Spectral Density')
+ax_B.step(bins_B, 10*np.log10(pn_lin_B))
+
+fig2_B, ax2_B = plt.subplots(1,1)
+
+ax2_B.set_xscale('log')
+ax2_B.set_xlim(1e3, 1e9)
+# ax2_b.set_yscale('log')
+#ax2_B.set_ylim()
+ax2_B.set_xlabel('Frequency Offset (Hz)')
+ax2_B.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
+ax2_B.set_title('CH B SSB Phase Noise ')
+ax2_B.step(bins_B[maxpt_B:]-Fo, 10*np.log10(pn_lin_B[maxpt_B:]))
+
+#ax2_B.scatter(integ_pt*1e3, ssb_pn[integ_pt], marker='x', c='r')
+
+
+fig_B.show()
+fig2_B.show()
+
 input("press enter to finish")
