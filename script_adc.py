@@ -25,9 +25,9 @@ scaling = 'density'
 # to choose a channel pick out every other linearly indexed data point
 
 
-#data = s.read_binary('../ADC_DATA/10Minput_2949.12Msample_bypass_12bit_CHAB_NOSYNC_100ms.bin')
-data = s.read_binary('../ADC_DATA/10Minput_2949.12Msample_bypass_12bit_CHAB_NOSYNC_1ms.bin')
-# data = s.read_binary('../ADC_DATA/10Minput_2949.12Msample_bypass_12bit_CHAB.bin')
+data = s.read_binary('../ADC_DATA/10Minput_2949.12Msample_bypass_12bit_CHAB_NOSYNC_100ms.bin')
+#data = s.read_binary('../ADC_DATA/10Minput_2949.12Msample_bypass_12bit_CHAB_NOSYNC_1ms.bin')
+#data = s.read_binary('../ADC_DATA/10Minput_2949.12Msample_bypass_12bit_CHAB.bin')
 
 voltage_A = lsb_adc*data[0::2]
 voltage_B = lsb_adc*data[1::2]
@@ -47,6 +47,7 @@ elif scaling == 'spectrum' : # V^2
 bins_A, power_A = periodogram(x=voltage_A, fs=Fs, window=None, nfft=len(voltage_A), return_onesided=True, scaling=scaling)
 bins_B, power_B = periodogram(x=voltage_B, fs=Fs, window=None, nfft=len(voltage_B), return_onesided=True, scaling=scaling)
 
+# scale by binwidth before normalizing to the carrier
 power_A = power_A/binwidth
 power_B = power_A/binwidth
 
@@ -60,14 +61,20 @@ print("Ch B tone is at", maxpt_B*Fs/len(voltage_B)*1e-6, "MHz")
 
 # calculate the close in phase noise and broadband phase noise for each channel
 
+# 10 MHz offset (20MHz absolute) is about location where spectrum is flattened (broadband phase noise)
+f_bb = int(20e6*len(voltage_A)/Fs)+1
+f_o = int(Fo*len(voltage_A)/Fs)+1
+area_bb = 10*np.log10(trapz(y=pn_lin_A[f_bb:], x=None, dx=Fs/len(voltage_A)))
+area_ci = 10*np.log10(trapz(y=pn_lin_A[f_o:f_bb], x=None, dx=Fs/len(voltage_A)))
+jitter_bb = np.sqrt(2*(10**(area_bb/10)))/(2*np.pi*Fo)
+jitter_ci = np.sqrt(2*(10**(area_ci/10)))/(2*np.pi*Fo)
 
-# replicate MT-008 Analog Devices guide data to verify that integration is working correctly.
-#ssb_pn2 = np.ones()
-
-integ_pt_off = 10
-integ_pt = np.arange(maxpt, maxpt+integ_pt_off)
-area = 10*np.log10(trapz(y=pn_lin_A[integ_pt], x=None, dx=binwidth))
-jitter = np.sqrt(2*(10**(area/10)))/(2*np.pi*Fo)
+# closein = 10
+# broadband = 10
+# integ_pt = np.arange(maxpt, maxpt+integ_pt_off)
+# area_ci = 10*np.log10(trapz(y=pn_lin_A[integ_pt], x=None, dx=binwidth))
+# area_bb = 10*np.log10(trapz(y=pn_lin_A[integ_pt], x=None, dx=binwidth))
+# jitter = np.sqrt(2*(10**(area/10)))/(2*np.pi*Fo)
 
 # print(jitter*1e12,"picoseconds of jitter recovered from integration")
 
@@ -109,7 +116,7 @@ ax_B.step(bins_B, 10*np.log10(pn_lin_B))
 
 fig2_B, ax2_B = plt.subplots(1,1)
 
-ax2_B.set_xscale('log')
+#ax2_B.set_xscale('log')
 ax2_B.set_xlim(1e3, 1e9)
 # ax2_b.set_yscale('log')
 #ax2_B.set_ylim()

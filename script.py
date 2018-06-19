@@ -15,17 +15,26 @@ jitter = 10e-12 # 10 picoseconds of RMS jitter
 Fo=1.3e9
 Fs = 3e9
 Ts= 1/Fs
-window=1e-3
+
+t_flip = 1e-3
+n_window = 100 
+
+binwidth = Fs/ (t_flip*Fs - t_flip*Fs % 2**12)
+
+# number of samples (per channel) in the dataset. rounded to closest multiple of 4096 as allowed by the TSW14J56
+# 32 GB of RAM. (can house up to 2,147,483,648 16 bit samples)
+n_samples= (n_window*t_flip*Fs)-(n+window*t_flip*Fs % (2**12))
+
 fft_len = int(window/Ts)
 
 scaling = 'density'
 bandwidth = [10**3, 10**9]
 
-if scaling == 'density' :
-	binwidth = Fs/fft_len
+# if scaling == 'density' :
+# 	binwidth = Fs/fft_len
 
-elif scaling == 'spectrum' :
-	binwidth = 1
+# elif scaling == 'spectrum' :
+# 	binwidth = 1
 
 data = s.make_signal(t_j=jitter)
 bins, power = s.spectrum(data, Fs = Fs, fft_len=window, scaling = scaling)
