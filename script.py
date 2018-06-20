@@ -1,6 +1,7 @@
 import sim as s
 import numpy as np
 from scipy.integrate import trapz
+from scipy.signal import medfilt, butter, bessel, lfilter, freqz, decimate, periodogram, welch
 import matplotlib.pyplot as plt
 
 # this function takes 1 ms window and produces spectrum.
@@ -10,25 +11,21 @@ import matplotlib.pyplot as plt
 # generator expression is like list comprehension with parentheses sum(a for i in list) 
 
 
-jitter = 10e-12 # 10 picoseconds of RMS jitter
+jitter = 1e-12 # 10 picoseconds of RMS jitter
 
 Fo=1.3e9
 Fs = 3e9
 Ts= 1/Fs
 
 t_flip = 1e-3
-n_window = 100 
 
-binwidth = Fs/ (t_flip*Fs - t_flip*Fs % 2**12)
+binwidth = 1/t_flip
 
 # number of samples (per channel) in the dataset. rounded to closest multiple of 4096 as allowed by the TSW14J56
 # 32 GB of RAM. (can house up to 2,147,483,648 16 bit samples)
-n_samples= (n_window*t_flip*Fs)-(n+window*t_flip*Fs % (2**12))
 
-fft_len = int(window/Ts)
 
-scaling = 'density'
-bandwidth = [10**3, 10**9]
+# scaling = 'density'
 
 # if scaling == 'density' :
 # 	binwidth = Fs/fft_len
@@ -37,7 +34,8 @@ bandwidth = [10**3, 10**9]
 # 	binwidth = 1
 
 data = s.make_signal(t_j=jitter)
-bins, power = s.spectrum(data, Fs = Fs, fft_len=window, scaling = scaling)
+bins, power = periodogram(x=data, fs=Fs, window=None, nfft=len(data), return_onesided=True, scaling='density')
+
 
 # from the frequency bins, let's integrate the spectrum to get the total amount of jitter... let's see how close this is to the
 # value we input in the first place.
@@ -49,7 +47,7 @@ bins, power = s.spectrum(data, Fs = Fs, fft_len=window, scaling = scaling)
 # this should be dBc/Hz. The question is if the order of operations matter for the bin scaling.
 ssb_pn_lin = power/np.max(power)
 maxpt = np.argmax(power)
-print("maximum is at", maxpt*binwidth*1e-9, "GHz with V^2 value", power[maxpt])
+print("maximum is at", maxpt*binwidth*1e-6, "MHz with V^2 value", power[maxpt])
 
 # replicate MT-008 Analog Devices guide data to verify that integration is working correctly.
 # single sided spectrum
@@ -69,10 +67,10 @@ tj2 = np.sqrt(2*10**(area2/10))/(2*np.pi*100e6)
 # we want to integrate over a 1 kilohertz bandwidth to get this number, let's do just the two adjacent bins to the peak...
 # or maybe several to be safe.
 
-integ_pt_off = 10
-integ_pt = np.arange(maxpt, maxpt+integ_pt_off)
-area = (trapz(y=ssb_pn_lin[integ_pt], x=None, dx=binwidth))
-#area += 10*np.log10(bandwidth[1]-bandwidth[0])
+f_o = int(Fo/binwidth) 
+integ = 10
+
+area = 10*np.log10(trapz(y=ssb_pn_lin[f_o+12:f_o+int(20e3)], x=None, dx=binwidth))
 jitter = np.sqrt(2*(10**(area/10)))/(2*np.pi*Fo)
 
 print(jitter*1e12,"picoseconds of jitter recovered from integration")
@@ -85,7 +83,7 @@ ax.set_xscale('log')
 ax.set_xlabel('Frequency (Hertz)')
 ax.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
 ax.set_title('Phase Noise')
-ax.step(bins, ssb_pn)
+ax.step(bins, 10*np.log10(ssb_pn_lin))
 
 fig2, ax2 = plt.subplots(1,1)
 
@@ -94,9 +92,9 @@ ax2.set_xscale('log')
 ax2.set_xlabel('Frequency Offset (Hz)')
 ax2.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
 ax2.set_title('Phase Noise Spectrum')
-ax2.step(bins[maxpt:]-Fo, ssb_pn[maxpt:])
+ax2.step(bins[maxpt:]-Fo, 10*np.log10(ssb_pn_lin[maxpt:]))
 
-ax2.scatter(integ_pt*1e3, ssb_pn[integ_pt], marker='x', c='r')
+# ax2.scatter(integ_pt*1e3, ssb_pn[integ_pt], marker='x', c='r')
 
 
 fig.show()

@@ -225,11 +225,11 @@ def make_signal(A_c = 1.0, F_c = 1.3e9, F_s=3.0e9, t_j=1.0e-12, t_flip=1.0e-3, n
 def write_binary(data, filename = '../data/test') :
 	data.tofile(filename, sep="")
 
-def read_binary(filename = '../data/test') :
+def read_binary(scale, filename = '../data/test') :
 	'''
 	this reads a binary file interpreted as series of 16bit integers, as is the case for our ADC's binary codes
 	'''
-	data = np.fromfile(filename, dtype=np.int16, count=-1, sep="")
+	data = scale*np.fromfile(filename, dtype=np.int16, count=-1, sep="")
 	return data
 
 
