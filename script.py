@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 # generator expression is like list comprehension with parentheses sum(a for i in list) 
 
 
-jitter = 1e-12 # 10 picoseconds of RMS jitter
+jitter = 0.1e-12 # 10 picoseconds of RMS jitter
 
 Fo=1.3e9
 Fs = 3e9
@@ -62,6 +62,37 @@ ssb_pn2 = np.ones(len(bins2))*1e-15
 area2 = 10*np.log10(trapz(y=ssb_pn2, x=None, dx=100))
 tj2 = np.sqrt(2*10**(area2/10))/(2*np.pi*100e6)
 
+# do calculation of total jitter contribution from the 
+
+# 10 Hz to 10MHz
+fo3 = 4e9
+bins3=np.power(10, [1,2,3,4,5,6,7])
+ssb_pn3_log = np.array([-65,-95,-102,-112,-117,-120,-132]) 
+ssb_pn3_lin = np.power(10, (ssb_pn3_log/10))
+
+area3 = 10*np.log10(trapz(y=ssb_pn3_lin, x=bins3))
+
+tj3 = np.sqrt(2*10**(area3/10))/(2*np.pi*fo3)
+
+# 10 Hz to 10MHz
+fo4 = 1.8e9
+bins4=np.array([12e3, 100e3, 1e6, 10e6, 20e6])
+ssb_pn4_log = np.array([-118,-123,-141,-157,-157]) + 4.437
+ssb_pn4_lin = np.power(10, (ssb_pn4_log/10))
+
+area4 = 10*np.log10(trapz(y=ssb_pn4_lin, x=bins4))
+
+tj4 = np.sqrt(2*10**(area4/10))/(2*np.pi*fo4)
+
+#BNC device at 4GHz, 1kHz offset
+fo5 = 4e9
+bins5=np.array([1e3])
+ssb_pn5_log = np.array([-108])
+ssb_pn5_lin = np.power(10, (ssb_pn5_log/10))
+
+area5 = 10*np.log10(bins5*ssb_pn5_lin)
+
+tj5 = np.sqrt(2*10**(area5/10))/(2*np.pi*fo5)
 
 # now let's convert the phase noise spectrum into an integrated value, then convert that into a jitter value in seconds.
 # we want to integrate over a 1 kilohertz bandwidth to get this number, let's do just the two adjacent bins to the peak...

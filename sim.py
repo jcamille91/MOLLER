@@ -232,7 +232,30 @@ def read_binary(scale, filename = '../data/test') :
 	data = scale*np.fromfile(filename, dtype=np.int16, count=-1, sep="")
 	return data
 
+def calculate_jitter(ssb_pn_log, fbins, carrier) :
 
+	'''function to calculate rms jitter (time domain expression of phase noise).
+	input: 
+	ssb_pn_log- single side band phase noise, relative to the carrier.
+	expressed in decibels relative to the carrier in a 1 Hz bandwidth. [dBc/Hz]
+	*** dBc = 10*log10(P/Pc). binwidth scaling needs to happen before the logarithm and carrier power normalization.
+	fbins- linear frequency bins associated with each phase noise value provided
+	carrier- linear frequency value associated with the carrier being referenced for the ssb phase noise values.
+	'''
+
+	if len(ssb_pn_log) == 1 :
+	bins4=np.array([12e3, 100e3, 1e6, 10e6, 20e6])
+	ssb_pn4_log = np.array([-118,-123,-141,-157,-157]) + 4.437
+	ssb_pn4_lin = np.power(10, (ssb_pn4_log/10))
+	area4 = 10*np.log10(trapz(y=ssb_pn4_lin, x=bins4))
+	tj_rms = np.sqrt(2*10**(area4/10))/(2*np.pi*fo4)
+
+	else :
+	ssb_pn_lin = np.power(10, ssb_pn_log/10)
+	integrated_pn = 10*np.log10(y=ssb_pn_lin, x=fbins)
+	tj_rms = np.sqrt(2*10**(integrated_pn/10))/(2*np.pi*carrier)
+	return tj_rms
+tj4 = np.sqrt(2*10**(area4/10))/(2*np.pi*fo4)
 def spectrum(data, Fs = 3e9, fft_len=1e-3, npt=None, scaling = 'density') :
 
 	'''calculate the spectrum of sampled data in a given rectangular window

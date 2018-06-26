@@ -25,9 +25,9 @@ scaling = 'density'
 # to choose a channel pick out every other linearly indexed data point
 
 
-data = s.read_binary('../ADC_DATA/10Minput_2949.12Msample_bypass_12bit_CHAB_NOSYNC_100ms.bin')
-#data = s.read_binary('../ADC_DATA/10Minput_2949.12Msample_bypass_12bit_CHAB_NOSYNC_1ms.bin')
-#data = s.read_binary('../ADC_DATA/10Minput_2949.12Msample_bypass_12bit_CHAB.bin')
+# data = s.read_binary('../ADC_DATA/10Minput_2949.12Msample_bypass_12bit_CHAB_NOSYNC_100ms.bin')
+data = s.read_binary('../ADC_DATA/10Minput_2949.12Msample_bypass_12bit_CHAB_NOSYNC_1ms.bin')
+# data = s.read_binary('../ADC_DATA/10Minput_2949.12Msample_bypass_12bit_CHAB.bin')
 
 voltage_A = lsb_adc*data[0::2]
 voltage_B = lsb_adc*data[1::2]
