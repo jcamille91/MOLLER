@@ -6,6 +6,7 @@ import argparse
 # Math
 import numpy as np
 from scipy.signal import medfilt, butter, bessel, lfilter, freqz, decimate, periodogram, welch
+from scipy.integrate import trapz
 from scipy.fftpack import fft
 from scipy.ndimage.filters import gaussian_filter
 # Plotting
@@ -72,8 +73,9 @@ def main(*args, **kwargs) :
 	#tj = np.linspace(1.0e-16, 1.0e-14, 10)
 
 	# 1fs
-	tj = np.array([1.0e-15, 10e-15, 100e-15, 1000e-15])
-	# tj = np.array([0])
+	# tj = np.array([1.0e-15, 10e-15, 100e-15, 1000e-15])
+	# tj = np.array([1e-12, 10e-12, 20e-12])
+	tj = np.array([20e-12])
 
 	# .01fs to 10fs, 30 steps.
 	# tj = np.linspace(1.0e-17, 1.0e-14, 30)
@@ -236,26 +238,34 @@ def calculate_jitter(ssb_pn_log, fbins, carrier) :
 
 	'''function to calculate rms jitter (time domain expression of phase noise).
 	input: 
+
 	ssb_pn_log- single side band phase noise, relative to the carrier.
 	expressed in decibels relative to the carrier in a 1 Hz bandwidth. [dBc/Hz]
 	*** dBc = 10*log10(P/Pc). binwidth scaling needs to happen before the logarithm and carrier power normalization.
 	fbins- linear frequency bins associated with each phase noise value provided
 	carrier- linear frequency value associated with the carrier being referenced for the ssb phase noise values.
+
+	output:
+	tj_rms- rms value of the jitter, integrated from a bandwidth of the phase noise
 	'''
 
-	if len(ssb_pn_log) == 1 :
-	bins4=np.array([12e3, 100e3, 1e6, 10e6, 20e6])
-	ssb_pn4_log = np.array([-118,-123,-141,-157,-157]) + 4.437
-	ssb_pn4_lin = np.power(10, (ssb_pn4_log/10))
-	area4 = 10*np.log10(trapz(y=ssb_pn4_lin, x=bins4))
-	tj_rms = np.sqrt(2*10**(area4/10))/(2*np.pi*fo4)
-
-	else :
+	ssb_pn_log = np.array(ssb_pn_log)
+	fbins = np.array(fbins)
 	ssb_pn_lin = np.power(10, ssb_pn_log/10)
-	integrated_pn = 10*np.log10(y=ssb_pn_lin, x=fbins)
+	integrated_pn = 10*np.log10(trapz(y=ssb_pn_lin, x=fbins))
 	tj_rms = np.sqrt(2*10**(integrated_pn/10))/(2*np.pi*carrier)
+
 	return tj_rms
-tj4 = np.sqrt(2*10**(area4/10))/(2*np.pi*fo4)
+
+def dbm2vpp(dbm) :
+
+	'''convert decibels normalized to miliwatt, to volts peak-to-peak (applied to a 50ohm load)
+	dbm = 10log10(P/1e-3) = 10log10(V^2/(R*1e-3)), vrms*2*sqrt(2) = vpp
+	'''
+	return np.sqrt(np.power(10, dbm/10)*50*1e-3*8)
+
+
+
 def spectrum(data, Fs = 3e9, fft_len=1e-3, npt=None, scaling = 'density') :
 
 	'''calculate the spectrum of sampled data in a given rectangular window

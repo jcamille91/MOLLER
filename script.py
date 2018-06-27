@@ -81,9 +81,11 @@ ssb_pn4_log = np.array([-118,-123,-141,-157,-157]) + 4.437
 ssb_pn4_lin = np.power(10, (ssb_pn4_log/10))
 
 area4 = 10*np.log10(trapz(y=ssb_pn4_lin, x=bins4))
+area42 = 10*np.log10(trapz(y=ssb_pn4_lin, x=bins4))
+
 
 tj4 = np.sqrt(2*10**(area4/10))/(2*np.pi*fo4)
-
+tj42 = np.sqrt(2*10**(area42/10))/(2*np.pi*fo4)
 #BNC device at 4GHz, 1kHz offset
 fo5 = 4e9
 bins5=np.array([1e3])
