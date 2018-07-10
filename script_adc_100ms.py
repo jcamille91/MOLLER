@@ -33,15 +33,100 @@ def plot(d, x, axis = None) :
 		
 		plt.close()
 
-def read_binary(scale, filename = '../data/test') :
+def read_binary(scale=1.35/(2**12), filename = '../data/test') :
 	'''
-	this reads a binary file interpreted as series of 16bit integers, as is the case for our ADC's binary codes
+	this reads a binary file interpreted as series of 16bit integers, as is the case for our ADC's binary codes.
+	two arrays of data are returned, for the adc's channel A and channel B
 	'''
 	data = scale*np.fromfile(filename, dtype=np.int16, count=-1, sep="")
-	return data
+	return data[0::2], data[1::2]
+	
+def plot_timevalues(filename ,start = 0, stop = 300000) :
 
-def A_resolution(fo = 10e6, fs = 2850e6, bits = 12, int_time=1e-3, ncalc=100, 
-	spectrum=False, ddc=False, ddc2=False, calc=False, xcor=False, plot=False,
+	data = read_binary(scale = 1.35/2**12, filename=filename) 
+	data
+
+def spectrum(file, fo = 10e6, fs = 2850e6, int_time=1e-3, int_bw=[1,10e3]) :
+	'''calculate the fourier spectrum of the adc's digitized signal.
+	convert spectrum to units of dBc/Hz (decibels normalized to the carrier power in 1Hz bandwidth).
+	calculate the jitter contribution in some specified bandwidth relative to the carrier.
+	input:
+	file- string giving binary file containing data
+	fo- expected carrier frequency
+	fs- ADC sampling clock frequency
+	int_time- integration time in seconds.
+	int_bw- bandwidth for jitter calculation specified in integer multiples of the binwidth. *binwidth = 1/(int_time) Hz*	
+	'''
+	binwidth = int(1/int_time) # Hz
+
+	ChA, ChB = read_binary(filename=file)
+	bins_A, power_A = welch(x=ChA, fs=fs, window=None, nfft=int(fs*int_time), return_onesided=True, scaling='density')
+	bins_B, power_B = welch(x=ChB, fs=fs, window=None, nfft=int(fs*int_time), return_onesided=True, scaling='density')
+
+	pn_lin_A = (power_A/np.max(power_A))
+	maxpt_A = np.argmax(power_A)
+	pn_lin_B = (power_B/np.max(power_B))
+	maxpt_B = np.argmax(power_B)
+
+	print("Ch A tone is at", maxpt_A*binwidth*1e-6, "MHz")
+	print("Ch B tone is at", maxpt_B*binwidth*1e-6, "MHz")
+
+
+	fig_A, ax_A = plt.subplots(1,1)
+
+	ax_A.set_xlim(1e6, 1e10)
+	ax_A.set_xscale('log')
+	#ax_A.set_yscale('log')
+	ax_A.set_xlabel('Frequency (Hertz)')
+	ax_A.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
+	ax_A.set_title('CH A Noise Spectral Density')
+	ax_A.step(bins_A, 10*np.log10(power_A/np.max(power_A)))
+
+	fig2_A, ax2_A = plt.subplots(1,1)
+
+	ax2_A.set_xscale('log')
+	ax2_A.set_xlim(1e3, 1e9)
+	#ax2_A.set_ylim()
+	ax2_A.set_xlabel('Frequency Offset (Hz)')
+	ax2_A.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
+	ax2_A.set_title('CH A SSB Phase Noise')
+	ax2_A.step(bins_A[maxpt_A:]-fo, 10*np.log10((power_A/np.max(power_A))[maxpt_A:]))
+
+	#ax2_A.scatter(integ_pt*1e3, ssb_pn[integ_pt], marker='x', c='r')
+
+
+	fig_A.show()
+	fig2_A.show()
+
+	fig_B, ax_B = plt.subplots(1,1)
+
+	ax_B.set_xlim(1e6, 1e10)
+	ax_B.set_xscale('log')
+	#ax_B.set_yscale('log')
+	ax_B.set_xlabel('Frequency (Hertz)')
+	ax_B.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
+	ax_B.set_title('CH B Noise Spectral Density')
+	ax_B.step(bins_B, 10*np.log10(power_B/np.max(power_B)))
+
+	fig2_B, ax2_B = plt.subplots(1,1)
+
+	ax2_B.set_xscale('log')
+	ax2_B.set_xlim(1e3, 1e9)
+	# ax2_b.set_yscale('log')
+	#ax2_B.set_ylim()
+	ax2_B.set_xlabel('Frequency Offset (Hz)')
+	ax2_B.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
+	ax2_B.set_title('CH B SSB Phase Noise ')
+	ax2_B.step(bins_B[maxpt_B:]-fo, 10*np.log10((power_B/np.max(power_B))[maxpt_B:]))
+
+	#ax2_B.scatter(integ_pt*1e3, ssb_pn[integ_pt], marker='x', c='r')
+
+
+	fig_B.show()
+	fig2_B.show()
+
+def ddc(fo = 10e6, fs = 2850e6, bits = 12, int_time=1e-3, ncalc=100, nch=2, 
+	spectrum=False, ddc=False, calc=False, xcor=False, plot=False,
 	file = '../ADC_DATA/7_5_external/7_5_2018_10MA_2850MS_extclk.bin') :
 	
 	''' 
@@ -77,7 +162,6 @@ def A_resolution(fo = 10e6, fs = 2850e6, bits = 12, int_time=1e-3, ncalc=100,
 	fsr = 1.35
 	lsb_adc = fsr/(2**bits)
 	maxcode = (2**bits)-1
-	nch = 2 # ADC32RF45 has 2 separate channels
 		
 	Wo = 2*np.pi*fo	
 	Ts= 1/fs
@@ -87,78 +171,9 @@ def A_resolution(fo = 10e6, fs = 2850e6, bits = 12, int_time=1e-3, ncalc=100,
 
 	# binary channels are written [A,B]_0, [A,B]_1, [A,B]_2.... etc/
 	# to choose a channel pick out every other linearly indexed data point
-	data = read_binary(scale = lsb_adc, filename=file)
+	ChA, ChB = read_binary(scale = lsb_adc, filename=file)
 
-
-
-	if spectrum :	
-
-		bins_A, power_A = periodogram(x=data[0::2], fs=fs, window=None, nfft=int(fs*int_time), return_onesided=True, scaling='density')
-		bins_B, power_B = periodogram(x=data[1::2], fs=fs, window=None, nfft=int(fs*int_time), return_onesided=True, scaling='density')
-
-		pn_lin_A = (power_A/np.max(power_A))
-		maxpt_A = np.argmax(power_A)
-		pn_lin_B = (power_B/np.max(power_B))
-		maxpt_B = np.argmax(power_B)
-
-		print("Ch A tone is at", maxpt_A*binwidth*1e-6, "MHz")
-		print("Ch B tone is at", maxpt_B*binwidth*1e-6, "MHz")
-
-
-		fig_A, ax_A = plt.subplots(1,1)
-
-		ax_A.set_xlim(1e6, 1e10)
-		ax_A.set_xscale('log')
-		#ax_A.set_yscale('log')
-		ax_A.set_xlabel('Frequency (Hertz)')
-		ax_A.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
-		ax_A.set_title('CH A Noise Spectral Density')
-		ax_A.step(bins_A, 10*np.log10(power_A/np.max(power_A)))
-
-		fig2_A, ax2_A = plt.subplots(1,1)
-
-		ax2_A.set_xscale('log')
-		ax2_A.set_xlim(1e3, 1e9)
-		#ax2_A.set_ylim()
-		ax2_A.set_xlabel('Frequency Offset (Hz)')
-		ax2_A.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
-		ax2_A.set_title('CH A SSB Phase Noise')
-		ax2_A.step(bins_A[maxpt_A:]-fo, 10*np.log10((power_A/np.max(power_A))[maxpt_A:]))
-
-		#ax2_A.scatter(integ_pt*1e3, ssb_pn[integ_pt], marker='x', c='r')
-
-
-		fig_A.show()
-		fig2_A.show()
-
-		fig_B, ax_B = plt.subplots(1,1)
-
-		ax_B.set_xlim(1e6, 1e10)
-		ax_B.set_xscale('log')
-		#ax_B.set_yscale('log')
-		ax_B.set_xlabel('Frequency (Hertz)')
-		ax_B.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
-		ax_B.set_title('CH B Noise Spectral Density')
-		ax_B.step(bins_B, 10*np.log10(power_B/np.max(power_B)))
-
-		fig2_B, ax2_B = plt.subplots(1,1)
-
-		ax2_B.set_xscale('log')
-		ax2_B.set_xlim(1e3, 1e9)
-		# ax2_b.set_yscale('log')
-		#ax2_B.set_ylim()
-		ax2_B.set_xlabel('Frequency Offset (Hz)')
-		ax2_B.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
-		ax2_B.set_title('CH B SSB Phase Noise ')
-		ax2_B.step(bins_B[maxpt_B:]-fo, 10*np.log10((power_B/np.max(power_B))[maxpt_B:]))
-
-		#ax2_B.scatter(integ_pt*1e3, ssb_pn[integ_pt], marker='x', c='r')
-
-
-		fig_B.show()
-		fig2_B.show()
-
-	if ddc2 :
+	if ddc :
 
 		# this filter is to remove spurs after 10MHz for the reference input.
 		cutoff0 = 13e6
@@ -169,14 +184,24 @@ def A_resolution(fo = 10e6, fs = 2850e6, bits = 12, int_time=1e-3, ncalc=100,
 		cutoff = 1e4
 
 		b1, a1 = define_bessel_lpf(cutoff=cutoff, fs=fs, order=3)
+		# w, h = freqz(b1, a1, worN=3000000)
+		# figf, axf = plt.subplots(1,1)
+		# axf.plot(0.5*fs*w/np.pi, np.abs(h), 'b')
+		# axf.plot(cutoff, 0.5*np.sqrt(2), 'ko')
+		# axf.axvline(cutoff, color='k')
+		# axf.set_xlim(0, 0.5*fs)
+		# axf.set_title("Lowpass Filter Frequency Response")
+		# axf.set_xlabel('Frequency [Hz]')
+		# axf.grid()
+		# figf.show()
 
-
-		# arrays to store average amplitudes (2 channels)
+		# arrays to store average amplitudes and sigma (2 channels)
 		avg = np.zeros((nch,ncalc))
 		rms = np.zeros(nch)
+
 		# number of samples in 1ms window
 		l = int(int_time*fs)
-		t_phi_avg = ncalc*l # averaging time for the phase. set to integer multiple of the integration window.
+		npt = ncalc*l # averaging time for the phase. set to integer multiple of the integration window.
 
 		#rad = Wo*np.linspace(0, int_time, l)
 		rad = Wo/fs*np.arange(l) # this way gets the phase values more accurately than linspace 2piFo/Fs*n
@@ -186,18 +211,21 @@ def A_resolution(fo = 10e6, fs = 2850e6, bits = 12, int_time=1e-3, ncalc=100,
 		Q_phi=np.cos(rad)
 
 		if fo < 12e6 :
-			# lowpass filtered data for each channel
-			Ch = np.array([lfilter(b0, a0, data[0::2][:l]), lfilter(b0, a0, data[1::2][:l])])
-
+			# lowpass filtered data for each channel, the 10MHz data is very noisy.
+			Ch = np.array([lfilter(b0, a0, ChA[:npt]), lfilter(b0, a0, ChB[:npt])])
+			# for now, now more filtering for the high frequency data. maybe bandpass if necessary.
 		else :
-			Ch = np.array([data[0::2], data[1::2]])
+			Ch = np.array([ChA[:npt], ChB[:npt]])
 
-		I_v=np.zeros(len(Ch[0]))
-		Q_v=np.zeros(len(Ch[0]))
+		I=np.zeros(len(Ch[0]))
+		Q=np.zeros(len(Ch[0]))
 
 		for k in range(nch):
 	
 			for i in range(ncalc) :
+				# we do i+1 onward to avoid the first dataset being affected by the lowpass filter settling time.
+				# start = i+1*l
+				# stop = (i+2)*l
 
 				start = i*l
 				stop = (i+1)*l
@@ -205,102 +233,28 @@ def A_resolution(fo = 10e6, fs = 2850e6, bits = 12, int_time=1e-3, ncalc=100,
 				# get binary data as int16, scale by adc lsb. even data -> channel A , odd data -> channel B.
 				# then multiply each 1ms window (of length l) by the sin and cos modulating terms.
 				# t represents the appropriate time values. finally, use a lowpass filter on this modulated data.
-				I_v[start:stop] = Ch[k][start:stop]*I_phi
-				Q_v[start:stop] = Ch[k][start:stop]*Q_phi
+				I[start:stop] = Ch[k][start:stop]*I_phi
+				Q[start:stop] = Ch[k][start:stop]*Q_phi
 
-				I_vf = lfilter(b1, a1, I_v)
-				Q_vf = lfilter(b1, a1, Q_v)
+			I_f = lfilter(b1, a1, I)
+			Q_f = lfilter(b1, a1, Q)
 		
 
-			phase = np.arctan(-I_Af[:t_phi_avg]/Q_Af[:t_phi_avg])	
+			phase = np.arctan(-I_f[:npt]/Q_f[:npt])	
 			avg_phase = np.mean(phase)
 
 			for i in range(ncalc) :
 				start = i*l
 				stop = (i+1)*l
 				# average amplitude recovered from I,Q components
-				avg[k][i] = np.mean(2*(Q_vf[start:stop]*np.cos(avg_phase) - I_vf[start:stop]*np.sin(avg_phase)))
+				avg[k][i] = np.mean(2*(Q_f[start:stop]*np.cos(avg_phase) - I_f[start:stop]*np.sin(avg_phase)))
 
 			# sigma of the distribution of average amplitudes		
 			rms[k] = np.std(avg[k])
-			print(rms[k], 'sigma error')
+			print('sigma error =', rms[k])
 
 
-	if ddc :
-
-		cutoff0 = 13e6
-
-		b0, a0 = define_bessel_lpf(cutoff=cutoff0, fs=fs, order=3)
-		
-		cutoff = 1e4
-		b, a = define_bessel_lpf(cutoff=cutoff, fs=fs, order=3)
-		w, h = freqz(b, a, worN=3000000)
-		figf, axf = plt.subplots(1,1)
-		axf.plot(0.5*fs*w/np.pi, np.abs(h), 'b')
-		axf.plot(cutoff, 0.5*np.sqrt(2), 'ko')
-		axf.axvline(cutoff, color='k')
-		axf.set_xlim(0, 0.5*fs)
-		axf.set_title("Lowpass Filter Frequency Response")
-		axf.set_xlabel('Frequency [Hz]')
-		axf.grid()
-		figf.show()
-
-		dcavgpt = int(3e7)
-		# arrays to store average amplitudes
-		avg_A = np.zeros(ncalc)
-		avg_B = np.zeros(ncalc)
-
-		l = int(int_time*fs)
-		t_phi_avg = 100*int(int_time*fs) # averaging time for the phase. set to integer multiple of the integration window.
-
-		#rad = Wo*np.linspace(0, int_time, l)
-		rad = Wo/fs*np.arange(l) # this way gets the phase values more accurately than linspace 2piFo/Fs*n
-		ChA = lfilter(b0, a0, data[0::2]) # - np.mean(data[0::2][:dcavgpt])
-		# ChA = data[0::2]
-
-		# ChB=data[1::2] # - np.mean(data[1::2][:dcavgpt])
-		I_A = np.zeros(len(ChA))
-		Q_A = np.zeros(len(ChA))
-
-		I=np.sin(rad)
-		Q=np.cos(rad)
-
-		for i in range(ncalc) :
-
-			start = i*l
-			stop = (i+1)*l
-
-			# get binary data as int16, scale by adc lsb. even data -> channel A , odd data -> channel B.
-			# then multiply each 1ms window (of length l) by the sin and cos modulating terms.
-			# t represents the appropriate time values. finally, use a lowpass filter on this modulated data.
-			I_A[start:stop] = ChA[start:stop]*I
-			Q_A[start:stop] = ChA[start:stop]*Q
-			# print(i)
-
-		I_Af = lfilter(b, a, I_A)
-		# print('done i filter')
-		Q_Af = lfilter(b, a, Q_A)
-		# print('done q filter')
-		# # # 	# I_Bf = lfilter(b, a, lsb_adc*data[1::2][start:stop]*np.sin(Wo*t))
-		# # # 	# Q_Bf = lfilter(b, a, lsb_adc*data[1::2][start:stop]*np.cos(Wo*t))
-
-		phase = np.arctan(-I_Af[:t_phi_avg]/Q_Af[:t_phi_avg])	
-		avg_phase = np.mean(phase)
-		# # rms_phase = np.std(phase)
-
-		for i in range(ncalc) :
-			start = i*l
-			stop = (i+1)*l
-		# average amplitude recovered from I,Q components
-			avg_A[i] = np.mean(2*(Q_Af[start:stop]*np.cos(avg_phase) - I_Af[start:stop]*np.sin(avg_phase)))
-			# print(i, 'calc #')
-		# # 	# a_B[i] = np.mean(2*(Q_Bf*np.cos(avg_phase) - I_Bf*np.sin(avg_phase)))
-
-		# # # # sigma of the distribution of average amplitudes		
-		rms_A = np.std(avg_A)
-		print(rms_A, 'sigma error')
-		# # # rms_B = np.std(avg_B)
-
+	
 		if plot :
 
 			pltlen = 900000
@@ -350,9 +304,10 @@ def A_resolution(fo = 10e6, fs = 2850e6, bits = 12, int_time=1e-3, ncalc=100,
 		pass
 
 	if xcor :
-		h, xbins, ybins = np.historgram2d(x=avg_A, y=avg_B, bins=None, range=None, normed=None)
+		r = [[min(avg[0]), max(avg[0])], [min(avg[1]), max(avg[1])]]
+		h, xbins, ybins = np.histogram2d(x=avg_A, y=avg_B, bins=None, range=r, normed=None)
 		figc, axc = plt.subplots(1,1)
 
 	input("press enter to finish")
 	plt.close('all')
-	return avg
+	return avg, rms
