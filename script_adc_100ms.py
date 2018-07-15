@@ -2,12 +2,44 @@ import numpy as np
 from scipy.integrate import trapz
 from scipy.signal import medfilt, butter, bessel, lfilter, freqz, decimate, periodogram, welch
 import matplotlib.pyplot as plt
+from matplotlib import axes
+ax_obj = axes.Axes
 
 def define_bessel_lpf(cutoff, fs, order=5, btype='low') :
 	nyq = 0.5 * fs
 	normalized_cutoff = cutoff / nyq
 	b, a = bessel(order, normalized_cutoff, btype='low', analog=False)
 	return b, a
+
+def calculate_jitter(ssb_pn, fbins, carrier, units='log') :
+
+	'''function to calculate rms jitter (time domain expression of phase noise).
+	input: 
+
+	ssb_pn_log- single side band phase noise, relative to the carrier.
+	expressed in decibels relative to the carrier in a 1 Hz bandwidth. [dBc/Hz]
+	*** dBc = 10*log10(P/Pc). binwidth scaling needs to happen before the logarithm and carrier power normalization.
+	fbins- linear frequency bins associated with each phase noise value provided
+	carrier- linear frequency value associated with the carrier being referenced for the ssb phase noise values.
+	units- choose lienar or logarithmic units of phase noise
+	output:
+	tj_rms- rms value of the jitter, integrated over bandwidth of the phase noise
+	'''
+
+	if units == 'log' : # use the logarithmic values
+		ssb_pn_log = np.array(ssb_pn)
+		fbins = np.array(fbins)
+		ssb_pn_lin = np.power(10, ssb_pn_log/10)
+		integrated_pn = 10*np.log10(trapz(y=ssb_pn_lin, x=fbins))
+		tj_rms = np.sqrt(2*10**(integrated_pn/10))/(2*np.pi*carrier)
+
+	elif units == 'lin' :	# use the linear values
+		ssb_pn_lin= np.array(ssb_pn)
+		fbins=np.array(fbins)
+		integrated_pn = 10*np.log10(trapz(y=ssb_pn_lin, x=fbins))
+		tj_rms = np.sqrt(2*10**(integrated_pn/10))/(2*np.pi*carrier)
+
+	return tj_rms
 
 def plot(d, x, axis = None) :
 	''' simple plot function. supply an axis object to add to an already existing plot.
@@ -33,12 +65,21 @@ def plot(d, x, axis = None) :
 		
 		plt.close()
 
-def read_binary(scale=1.35/(2**12), filename = '../data/test') :
+def read_binary(filename, nbits=12, fsr=1.35, raw=None) :
 	'''
 	this reads a binary file interpreted as series of 16bit integers, as is the case for our ADC's binary codes.
-	two arrays of data are returned, for the adc's channel A and channel B
+	two arrays of data are returned, for the adc's channel A and channel B.
+	input:
+	filename- binary file containing channels A and B. The data is organized:
+	(CHA[n=0], CHB[n=0]), (CHA[n=1], CHB[n=1]), ..., (CHA[n=N], CHB[n=N])
+	nbits- number of bits used by the ADC to construct the data
+	fsr- full scale range of the ADC in volts peak to peak
+	raw- Set to true to return the raw ADC codes instead of converted voltage values
 	'''
-	data = scale*np.fromfile(filename, dtype=np.int16, count=-1, sep="")
+	if raw : 
+		data = np.fromfile(filename, dtype=np.int16, count=-1, sep="")
+	else :
+		data = (np.fromfile(filename, dtype=np.int16, count=-1, sep="")-(2**(nbits-1)))*fsr/(2**nbits)
 	return data[0::2], data[1::2]
 	
 def plot_timevalues(filename ,start = 0, stop = 300000) :
@@ -46,7 +87,7 @@ def plot_timevalues(filename ,start = 0, stop = 300000) :
 	data = read_binary(scale = 1.35/2**12, filename=filename) 
 	data
 
-def spectrum(file, fo = 10e6, fs = 2850e6, int_time=1e-3, int_bw=[1,10e3]) :
+def spectrum2(file, fo = 10e6, fs = 2850e6, int_time=100e-3, int_bw=[1,10e3]) :
 	'''calculate the fourier spectrum of the adc's digitized signal.
 	convert spectrum to units of dBc/Hz (decibels normalized to the carrier power in 1Hz bandwidth).
 	calculate the jitter contribution in some specified bandwidth relative to the carrier.
@@ -55,21 +96,49 @@ def spectrum(file, fo = 10e6, fs = 2850e6, int_time=1e-3, int_bw=[1,10e3]) :
 	fo- expected carrier frequency
 	fs- ADC sampling clock frequency
 	int_time- integration time in seconds.
-	int_bw- bandwidth for jitter calculation specified in integer multiples of the binwidth. *binwidth = 1/(int_time) Hz*	
+	int_bw- bandwidth for jitter calculation specified in integer multiples of the binwidth. binwidth = 1/(int_time) Hz
+	This bandwidth is single sideband, relative to the carrier (specified in frequency offset, not absolute frequency).
 	'''
-	binwidth = int(1/int_time) # Hz
+	
+	ChA, ChB = read_binary(filename=file, nbits=12, fsr=1.35, raw=None)
+	n_sample_window = int(fs*int_time)	# number of samples in 1ms integration window.
 
-	ChA, ChB = read_binary(filename=file)
-	bins_A, power_A = welch(x=ChA, fs=fs, window=None, nfft=int(fs*int_time), return_onesided=True, scaling='density')
-	bins_B, power_B = welch(x=ChB, fs=fs, window=None, nfft=int(fs*int_time), return_onesided=True, scaling='density')
+	binwidth = int(1/int_time) # Hz
+	# this indexes the bins to get the desired frequency bins for integrating the phase noise
+	index = np.linspace(int(int_bw[0]), int(int_bw[1]), int(int_bw[1]-int_bw[0])+1, dtype=int)
+	
+	# first, let's do a simple case over 100ms, 10Hz binwidth.
+	x = fft(ChA)[0:N/2]*2.0/N/binwidth
+	y = fft(ChB)[0:N/2]*2.0/N/binwidth
+	
+	Sxx = np.square(np.abs(x))
+	Syy = np.square(np.abs(y))
+	Sxy = np.square(np.abs(x*y))
+
+	Sxc = (Sxx + Syy - 2*Sxy)
+
+	cutoff0 = 13e6
+	if fo < cutoff0 :
+		b0, a0 = define_bessel_lpf(cutoff=cutoff0, fs=fs, order=3)
+		ChA = lfilter(b0, a0, ChA)
+		ChB = lfilter(b0, a0, ChB)
+
+	# throw out the first window of data, the filter needs response needs to stabilize.
+	bins_A, power_A = periodogram(x=ChA[n_sample_window:], fs=fs, nfft=n_sample_window, return_onesided=True, scaling='density')
+	bins_B, power_B = periodogram(x=ChB[n_sample_window:], fs=fs, nfft=n_sample_window, return_onesided=True, scaling='density')
 
 	pn_lin_A = (power_A/np.max(power_A))
 	maxpt_A = np.argmax(power_A)
 	pn_lin_B = (power_B/np.max(power_B))
 	maxpt_B = np.argmax(power_B)
 
+	tj_A = calculate_jitter(ssb_pn=pn_lin_A[index], fbins=bins_A[index], carrier=fo, units='lin')
+	tj_B = calculate_jitter(ssb_pn=pn_lin_B[index], fbins=bins_B[index], carrier=fo, units='lin')
+
 	print("Ch A tone is at", maxpt_A*binwidth*1e-6, "MHz")
+	print("Ch A has", tj_A*1e15, "femtoseconds of jitter")
 	print("Ch B tone is at", maxpt_B*binwidth*1e-6, "MHz")
+	print("Ch B has", tj_B*1e15, "femtoseconds of jitter")
 
 
 	fig_A, ax_A = plt.subplots(1,1)
@@ -80,7 +149,7 @@ def spectrum(file, fo = 10e6, fs = 2850e6, int_time=1e-3, int_bw=[1,10e3]) :
 	ax_A.set_xlabel('Frequency (Hertz)')
 	ax_A.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
 	ax_A.set_title('CH A Noise Spectral Density')
-	ax_A.step(bins_A, 10*np.log10(power_A/np.max(power_A)))
+	ax_A.step(bins_A, 10*np.log10(pn_lin_A))
 
 	fig2_A, ax2_A = plt.subplots(1,1)
 
@@ -90,7 +159,7 @@ def spectrum(file, fo = 10e6, fs = 2850e6, int_time=1e-3, int_bw=[1,10e3]) :
 	ax2_A.set_xlabel('Frequency Offset (Hz)')
 	ax2_A.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
 	ax2_A.set_title('CH A SSB Phase Noise')
-	ax2_A.step(bins_A[maxpt_A:]-fo, 10*np.log10((power_A/np.max(power_A))[maxpt_A:]))
+	ax2_A.step(bins_A[maxpt_A:]-fo, 10*np.log10((pn_lin_A)[maxpt_A:]))
 
 	#ax2_A.scatter(integ_pt*1e3, ssb_pn[integ_pt], marker='x', c='r')
 
@@ -106,7 +175,7 @@ def spectrum(file, fo = 10e6, fs = 2850e6, int_time=1e-3, int_bw=[1,10e3]) :
 	ax_B.set_xlabel('Frequency (Hertz)')
 	ax_B.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
 	ax_B.set_title('CH B Noise Spectral Density')
-	ax_B.step(bins_B, 10*np.log10(power_B/np.max(power_B)))
+	ax_B.step(bins_B, 10*np.log10(pn_lin_B))
 
 	fig2_B, ax2_B = plt.subplots(1,1)
 
@@ -117,13 +186,111 @@ def spectrum(file, fo = 10e6, fs = 2850e6, int_time=1e-3, int_bw=[1,10e3]) :
 	ax2_B.set_xlabel('Frequency Offset (Hz)')
 	ax2_B.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
 	ax2_B.set_title('CH B SSB Phase Noise ')
-	ax2_B.step(bins_B[maxpt_B:]-fo, 10*np.log10((power_B/np.max(power_B))[maxpt_B:]))
+	ax2_B.step(bins_B[maxpt_B:]-fo, 10*np.log10((pn_lin_B)[maxpt_B:]))
 
 	#ax2_B.scatter(integ_pt*1e3, ssb_pn[integ_pt], marker='x', c='r')
 
 
 	fig_B.show()
 	fig2_B.show()
+	return bins_A, index
+
+def spectrum(file, fo = 10e6, fs = 2850e6, int_time=1e-3, int_bw=[1,10e3]) :
+	'''calculate the fourier spectrum of the adc's digitized signal.
+	convert spectrum to units of dBc/Hz (decibels normalized to the carrier power in 1Hz bandwidth).
+	calculate the jitter contribution in some specified bandwidth relative to the carrier.
+	input:
+	file- string giving binary file containing data
+	fo- expected carrier frequency
+	fs- ADC sampling clock frequency
+	int_time- integration time in seconds.
+	int_bw- bandwidth for jitter calculation specified in integer multiples of the binwidth. binwidth = 1/(int_time) Hz
+	This bandwidth is single sideband, relative to the carrier (specified in frequency offset, not absolute frequency).
+	'''
+	
+	ChA, ChB = read_binary(filename=file)
+	n_sample_window = int(fs*int_time)	# number of samples in 1ms integration window.
+
+	binwidth = int(1/int_time) # Hz
+	index = np.linspace(int(int_bw[0]), int(int_bw[1]), int(int_bw[1]-int_bw[0])+1, dtype=int) # this indexes the bins to get the desired frequency bins
+				  																			   # for integrating the phase noise
+	cutoff0 = 13e6
+	if fo < cutoff0 :
+		b0, a0 = define_bessel_lpf(cutoff=cutoff0, fs=fs, order=3)
+		ChA = lfilter(b0, a0, ChA)
+		ChB = lfilter(b0, a0, ChB)
+
+	# throw out the first window of data, the filter needs response needs to stabilize.
+	bins_A, power_A = periodogram(x=ChA[n_sample_window:], fs=fs, nfft=n_sample_window, return_onesided=True, scaling='density')
+	bins_B, power_B = periodogram(x=ChB[n_sample_window:], fs=fs, nfft=n_sample_window, return_onesided=True, scaling='density')
+
+	pn_lin_A = (power_A/np.max(power_A))
+	maxpt_A = np.argmax(power_A)
+	pn_lin_B = (power_B/np.max(power_B))
+	maxpt_B = np.argmax(power_B)
+
+	tj_A = calculate_jitter(ssb_pn=pn_lin_A[index], fbins=bins_A[index], carrier=fo, units='lin')
+	tj_B = calculate_jitter(ssb_pn=pn_lin_B[index], fbins=bins_B[index], carrier=fo, units='lin')
+
+	print("Ch A tone is at", maxpt_A*binwidth*1e-6, "MHz")
+	print("Ch A has", tj_A*1e15, "femtoseconds of jitter")
+	print("Ch B tone is at", maxpt_B*binwidth*1e-6, "MHz")
+	print("Ch B has", tj_B*1e15, "femtoseconds of jitter")
+
+
+	fig_A, ax_A = plt.subplots(1,1)
+
+	ax_A.set_xlim(1e6, 1e10)
+	ax_A.set_xscale('log')
+	#ax_A.set_yscale('log')
+	ax_A.set_xlabel('Frequency (Hertz)')
+	ax_A.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
+	ax_A.set_title('CH A Noise Spectral Density')
+	ax_A.step(bins_A, 10*np.log10(pn_lin_A))
+
+	fig2_A, ax2_A = plt.subplots(1,1)
+
+	ax2_A.set_xscale('log')
+	ax2_A.set_xlim(1e3, 1e9)
+	#ax2_A.set_ylim()
+	ax2_A.set_xlabel('Frequency Offset (Hz)')
+	ax2_A.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
+	ax2_A.set_title('CH A SSB Phase Noise')
+	ax2_A.step(bins_A[maxpt_A:]-fo, 10*np.log10((pn_lin_A)[maxpt_A:]))
+
+	#ax2_A.scatter(integ_pt*1e3, ssb_pn[integ_pt], marker='x', c='r')
+
+
+	fig_A.show()
+	fig2_A.show()
+
+	fig_B, ax_B = plt.subplots(1,1)
+
+	ax_B.set_xlim(1e6, 1e10)
+	ax_B.set_xscale('log')
+	#ax_B.set_yscale('log')
+	ax_B.set_xlabel('Frequency (Hertz)')
+	ax_B.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
+	ax_B.set_title('CH B Noise Spectral Density')
+	ax_B.step(bins_B, 10*np.log10(pn_lin_B))
+
+	fig2_B, ax2_B = plt.subplots(1,1)
+
+	ax2_B.set_xscale('log')
+	ax2_B.set_xlim(1e3, 1e9)
+	# ax2_b.set_yscale('log')
+	#ax2_B.set_ylim()
+	ax2_B.set_xlabel('Frequency Offset (Hz)')
+	ax2_B.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
+	ax2_B.set_title('CH B SSB Phase Noise ')
+	ax2_B.step(bins_B[maxpt_B:]-fo, 10*np.log10((pn_lin_B)[maxpt_B:]))
+
+	#ax2_B.scatter(integ_pt*1e3, ssb_pn[integ_pt], marker='x', c='r')
+
+
+	fig_B.show()
+	fig2_B.show()
+	return bins_A, index
 
 def ddc(fo = 10e6, fs = 2850e6, bits = 12, int_time=1e-3, ncalc=100, nch=2, 
 	spectrum=False, ddc=False, calc=False, xcor=False, plot=False,
