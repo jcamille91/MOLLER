@@ -1,4 +1,5 @@
 import numpy as np
+from scipy.fftpack import fft
 from scipy.integrate import trapz
 from scipy.signal import medfilt, butter, bessel, lfilter, freqz, decimate, periodogram, welch
 import matplotlib.pyplot as plt
@@ -87,7 +88,7 @@ def plot_timevalues(filename ,start = 0, stop = 300000) :
 	data = read_binary(scale = 1.35/2**12, filename=filename) 
 	data
 
-def spectrum2(file, fo = 10e6, fs = 2850e6, int_time=100e-3, int_bw=[1,10e3]) :
+def spectrum2(file, fo = 10e6, fs = 2850e6, int_time=100e-3, n_window=99) :
 	'''calculate the fourier spectrum of the adc's digitized signal.
 	convert spectrum to units of dBc/Hz (decibels normalized to the carrier power in 1Hz bandwidth).
 	calculate the jitter contribution in some specified bandwidth relative to the carrier.
@@ -99,47 +100,49 @@ def spectrum2(file, fo = 10e6, fs = 2850e6, int_time=100e-3, int_bw=[1,10e3]) :
 	int_bw- bandwidth for jitter calculation specified in integer multiples of the binwidth. binwidth = 1/(int_time) Hz
 	This bandwidth is single sideband, relative to the carrier (specified in frequency offset, not absolute frequency).
 	'''
-	
+
+	# the channel codes are converted to volts, unless 'raw=True'
 	ChA, ChB = read_binary(filename=file, nbits=12, fsr=1.35, raw=None)
-	n_sample_window = int(fs*int_time)	# number of samples in 1ms integration window.
+	N = int(fs*int_time)	# number of samples in integration window.
 
 	binwidth = int(1/int_time) # Hz
 	# this indexes the bins to get the desired frequency bins for integrating the phase noise
-	index = np.linspace(int(int_bw[0]), int(int_bw[1]), int(int_bw[1]-int_bw[0])+1, dtype=int)
+	# index = np.linspace(int(int_bw[0]), int(int_bw[1]), int(int_bw[1]-int_bw[0])+1, dtype=int)
 	
-	# first, let's do a simple case over 100ms, 10Hz binwidth.
-	x = fft(ChA)[0:N/2]*2.0/N/binwidth
-	y = fft(ChB)[0:N/2]*2.0/N/binwidth
-	
-	Sxx = np.square(np.abs(x))
-	Syy = np.square(np.abs(y))
-	Sxy = np.square(np.abs(x*y))
+	Saa = np.zeros(int(N/2)) # power spectrum of channel A
+	Sbb = np.zeros(int(N/2)) # power spectrum of channel B
+	Sba = np.zeros(int(N/2)) # cross correlation spectrum of channels A and B
 
-	Sxc = (Sxx + Syy - 2*Sxy)
+	for i in range(n_window):
+		print(i)
+		start = int(i*N)
+		stop = int((i+1)*N)
 
-	cutoff0 = 13e6
-	if fo < cutoff0 :
-		b0, a0 = define_bessel_lpf(cutoff=cutoff0, fs=fs, order=3)
-		ChA = lfilter(b0, a0, ChA)
-		ChB = lfilter(b0, a0, ChB)
+		# get positive frequencies of FFT, normalize by N
+		a = fft(ChA[start:stop])[:int(N/2)]/N
+		b = fft(ChB[start:stop])[:int(N/2)]/N
+		
+		# sum the uncorrelated variances
+		Saa += np.square(np.abs(a))
+		Sbb += np.square(np.abs(b))
+		Sba += np.square((b*np.conj(a)))
 
-	# throw out the first window of data, the filter needs response needs to stabilize.
-	bins_A, power_A = periodogram(x=ChA[n_sample_window:], fs=fs, nfft=n_sample_window, return_onesided=True, scaling='density')
-	bins_B, power_B = periodogram(x=ChB[n_sample_window:], fs=fs, nfft=n_sample_window, return_onesided=True, scaling='density')
+	# divide by the binwidth and the number of spectrums averaged. multiply by 2 for single sided spectrum.
+	# This single-sided power spectral density has units of volts^2/Hz
+	Saa = 2*Saa/n_window/binwidth
+	Sbb = 2*Sbb/n_window/binwidth
+	Sba = 2*Sba/n_window/binwidth
 
-	pn_lin_A = (power_A/np.max(power_A))
-	maxpt_A = np.argmax(power_A)
-	pn_lin_B = (power_B/np.max(power_B))
-	maxpt_B = np.argmax(power_B)
+	fbins = np.linspace(0, fs/2, int(N/2))
 
-	tj_A = calculate_jitter(ssb_pn=pn_lin_A[index], fbins=bins_A[index], carrier=fo, units='lin')
-	tj_B = calculate_jitter(ssb_pn=pn_lin_B[index], fbins=bins_B[index], carrier=fo, units='lin')
+	# This spectrum is due to only the uncorrelated noise sources.
+	Sdiff = (Saa + Sbb - 2*np.abs(Sba))
 
-	print("Ch A tone is at", maxpt_A*binwidth*1e-6, "MHz")
-	print("Ch A has", tj_A*1e15, "femtoseconds of jitter")
-	print("Ch B tone is at", maxpt_B*binwidth*1e-6, "MHz")
-	print("Ch B has", tj_B*1e15, "femtoseconds of jitter")
-
+	# cutoff0 = 13e6
+	# if fo < cutoff0 :
+	# 	b0, a0 = define_bessel_lpf(cutoff=cutoff0, fs=fs, order=3)
+	# 	ChA = lfilter(b0, a0, ChA)
+	# 	ChB = lfilter(b0, a0, ChB)
 
 	fig_A, ax_A = plt.subplots(1,1)
 
@@ -149,23 +152,7 @@ def spectrum2(file, fo = 10e6, fs = 2850e6, int_time=100e-3, int_bw=[1,10e3]) :
 	ax_A.set_xlabel('Frequency (Hertz)')
 	ax_A.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
 	ax_A.set_title('CH A Noise Spectral Density')
-	ax_A.step(bins_A, 10*np.log10(pn_lin_A))
-
-	fig2_A, ax2_A = plt.subplots(1,1)
-
-	ax2_A.set_xscale('log')
-	ax2_A.set_xlim(1e3, 1e9)
-	#ax2_A.set_ylim()
-	ax2_A.set_xlabel('Frequency Offset (Hz)')
-	ax2_A.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
-	ax2_A.set_title('CH A SSB Phase Noise')
-	ax2_A.step(bins_A[maxpt_A:]-fo, 10*np.log10((pn_lin_A)[maxpt_A:]))
-
-	#ax2_A.scatter(integ_pt*1e3, ssb_pn[integ_pt], marker='x', c='r')
-
-
-	fig_A.show()
-	fig2_A.show()
+	ax_A.step(fbins, 10*np.log10(Saa/np.max(Saa)))
 
 	fig_B, ax_B = plt.subplots(1,1)
 
@@ -175,25 +162,26 @@ def spectrum2(file, fo = 10e6, fs = 2850e6, int_time=100e-3, int_bw=[1,10e3]) :
 	ax_B.set_xlabel('Frequency (Hertz)')
 	ax_B.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
 	ax_B.set_title('CH B Noise Spectral Density')
-	ax_B.step(bins_B, 10*np.log10(pn_lin_B))
+	ax_B.step(fbins, 10*np.log10(Sbb/np.max(Sbb)))
 
-	fig2_B, ax2_B = plt.subplots(1,1)
+	fig_C, ax_C = plt.subplots(1,1)
 
-	ax2_B.set_xscale('log')
-	ax2_B.set_xlim(1e3, 1e9)
-	# ax2_b.set_yscale('log')
-	#ax2_B.set_ylim()
-	ax2_B.set_xlabel('Frequency Offset (Hz)')
-	ax2_B.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
-	ax2_B.set_title('CH B SSB Phase Noise ')
-	ax2_B.step(bins_B[maxpt_B:]-fo, 10*np.log10((pn_lin_B)[maxpt_B:]))
+	ax_C.set_xlim(1e6, 1e10)
+	ax_C.set_xscale('log')
+	#ax_C.set_yscale('log')
+	ax_C.set_xlabel('Frequency (Hertz)')
+	ax_C.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
+	ax_C.set_title('A/B Cross Correlation Noise Spectral Density')
+	ax_C.step(fbins, 10*np.log10(Sdiff/np.max(Sdiff)))
 
-	#ax2_B.scatter(integ_pt*1e3, ssb_pn[integ_pt], marker='x', c='r')
-
-
+	fig_A.show()
 	fig_B.show()
-	fig2_B.show()
-	return bins_A, index
+	fig_C.show()
+
+	# tj_A = calculate_jitter(ssb_pn=pn_lin_A[index], fbins=bins_A[index], carrier=fo, units='lin')
+	# tj_B = calculate_jitter(ssb_pn=pn_lin_B[index], fbins=bins_B[index], carrier=fo, units='lin')
+
+	# return bins_A, index
 
 def spectrum(file, fo = 10e6, fs = 2850e6, int_time=1e-3, int_bw=[1,10e3]) :
 	'''calculate the fourier spectrum of the adc's digitized signal.
@@ -475,6 +463,92 @@ def ddc(fo = 10e6, fs = 2850e6, bits = 12, int_time=1e-3, ncalc=100, nch=2,
 		h, xbins, ybins = np.histogram2d(x=avg_A, y=avg_B, bins=None, range=r, normed=None)
 		figc, axc = plt.subplots(1,1)
 
+	# return bins_A, index
 	input("press enter to finish")
 	plt.close('all')
 	return avg, rms
+	
+file='../ADC_DATA/7_5_external/7_5_2018_10MA_2850MS_extclk.bin'
+fo = 10e6 
+fs = 2850e6 
+int_time=10e-6 
+n_window=10	
+# the channel codes are converted to volts, unless 'raw=True'
+ChA, ChB = read_binary(filename=file, nbits=12, fsr=1.35, raw=None)
+N = int(fs*int_time)	# number of samples in integration window.
+
+binwidth = int(1/int_time) # Hz
+# this indexes the bins to get the desired frequency bins for integrating the phase noise
+# index = np.linspace(int(int_bw[0]), int(int_bw[1]), int(int_bw[1]-int_bw[0])+1, dtype=int)
+
+Saa = np.zeros(int(N/2)) # power spectrum of channel A
+Sbb = np.zeros(int(N/2)) # power spectrum of channel B
+Sba = np.zeros(int(N/2)) # cross correlation spectrum of channels A and B
+
+for i in range(n_window):
+	print(i)
+	start = int(i*N)
+	stop = int((i+1)*N)
+
+	# get positive frequencies of FFT, normalize by N
+	a = fft(ChA[start:stop])[:int(N/2)]/N
+	b = fft(ChB[start:stop])[:int(N/2)]/N
+	
+	# sum the uncorrelated variances
+	Saa += np.square(np.abs(a))
+	Sbb += np.square(np.abs(b))
+	Sba += np.square((b*np.conj(a)))
+
+# divide by the binwidth and the number of spectrums averaged. multiply by 2 for single sided spectrum.
+# This single-sided power spectral density has units of volts^2/Hz
+Saa = 2*Saa/n_window/binwidth
+Sbb = 2*Sbb/n_window/binwidth
+Sba = 2*Sba/n_window/binwidth
+
+fbins = np.linspace(0, fs/2, int(N/2))
+
+# This spectrum is due to only the uncorrelated noise sources.
+Sdiff = (Saa + Sbb - 2*np.abs(Sba))
+
+# cutoff0 = 13e6
+# if fo < cutoff0 :
+# 	b0, a0 = define_bessel_lpf(cutoff=cutoff0, fs=fs, order=3)
+# 	ChA = lfilter(b0, a0, ChA)
+# 	ChB = lfilter(b0, a0, ChB)
+
+fig_A, ax_A = plt.subplots(1,1)
+
+ax_A.set_xlim(1e6, 1e10)
+ax_A.set_xscale('log')
+#ax_A.set_yscale('log')
+ax_A.set_xlabel('Frequency (Hertz)')
+ax_A.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
+ax_A.set_title('CH A Noise Spectral Density')
+ax_A.step(fbins, 10*np.log10(Saa/np.max(Saa)))
+
+fig_B, ax_B = plt.subplots(1,1)
+
+ax_B.set_xlim(1e6, 1e10)
+ax_B.set_xscale('log')
+#ax_B.set_yscale('log')
+ax_B.set_xlabel('Frequency (Hertz)')
+ax_B.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
+ax_B.set_title('CH B Noise Spectral Density')
+ax_B.step(fbins, 10*np.log10(Sbb/np.max(Sbb)))
+
+fig_C, ax_C = plt.subplots(1,1)
+
+ax_C.set_xlim(1e6, 1e10)
+ax_C.set_xscale('log')
+#ax_C.set_yscale('log')
+ax_C.set_xlabel('Frequency (Hertz)')
+ax_C.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
+ax_C.set_title('A/B Cross Correlation Noise Spectral Density')
+ax_C.step(fbins, 10*np.log10(Sdiff/np.max(Sdiff)))
+
+fig_A.show()
+fig_B.show()
+fig_C.show()
+
+# tj_A = calculate_jitter(ssb_pn=pn_lin_A[index], fbins=bins_A[index], carrier=fo, units='lin')
+# tj_B = calculate_jitter(ssb_pn=pn_lin_B[index], fbins=bins_B[index], carrier=fo, units='lin')
