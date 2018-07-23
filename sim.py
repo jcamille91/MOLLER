@@ -56,6 +56,8 @@ def main(*args, **kwargs) :
 	n_sample_avg = args.n_sample_avg
 
 	lpfc = args.cutoff_freq
+	# l = int(t_flip*F_s)
+	# rad = 2*np.pi*F_c/F_s*np.arange(l)
 	# array of samples. 3GSPS over a 1ms window (the helicity rate/integration time).
 	n = np.linspace(0, n_window*t_flip, int(n_window*t_flip/T_s))
 	n_avg = int((len(n)-t_off)/n_sample_avg) # number of "n_sample_avg length" slices of the data to calculate average amplitude.
@@ -75,8 +77,8 @@ def main(*args, **kwargs) :
 	# 1fs
 	# tj = np.array([1.0e-15, 10e-15, 100e-15, 1000e-15])
 	# tj = np.array([1e-12, 10e-12, 20e-12])
-	tj = np.array([20e-12])
-
+	tj = np.array([1e-12])
+	w_c2 = 2*np.pi*1300000000
 	# .01fs to 10fs, 30 steps.
 	# tj = np.linspace(1.0e-17, 1.0e-14, 30)
 	# --------------------------------------------------------------------------------------
@@ -87,7 +89,7 @@ def main(*args, **kwargs) :
 
 	# define butterworth lowpass filter and get its coefficients
 	# coef = define_butter_lpf(cutoff=100, fs=F_s, order=5)
-	cutoff = 0.1e9
+	cutoff = 1e9
 	b, a = define_bessel_lpf(cutoff=cutoff, fs=F_s, order=7)
 
 	# plot filter frequency response to check results are as expected
@@ -208,6 +210,8 @@ def main(*args, **kwargs) :
 
 	input('press enter to close plots')
 	plt.close('all')
+	print(A_avg)
+	print(A_rms)
 
 def make_signal(A_c = 1.0, F_c = 1.3e9, F_s=3.0e9, t_j=1.0e-12, t_flip=1.0e-3, n_s_avg=300000, n_window=1) :
 	''' create phase noise corrupted signal with appropriate length '''
