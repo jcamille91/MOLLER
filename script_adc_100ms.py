@@ -80,37 +80,35 @@ def read_binary(infile, nbits=12, fsr=1.35, raw=None, outfile=None) :
 	'''
 	if not outfile :
 		if raw : 
-			data = np.fromfile(filename, dtype=np.int16, count=-1, sep="")
+			data = np.fromfile(infile, dtype=np.int16, count=-1, sep="")
 		else :
-			data = (np.fromfile(filename, dtype=np.int16, count=-1, sep="")-(2**(nbits-1)))*fsr/(2**nbits)
+			data = (np.fromfile(infile, dtype=np.int16, count=-1, sep="")-(2**(nbits-1)))*fsr/(2**nbits)
 		
 		return data[0::2], data[1::2]
-	else 
 
-def save_object(obj, outfile):
-	''' save an object (serialize it) with pickle library.
-	input:
-	-obj : instance of a python class.
-	-outfile: string name, including path, for .pkl file.
-	string must end in ".pkl"
-	'''
+	else :
+		data = (np.fromfile(infile, dtype=np.int16, count=-1, sep="")-(2**(nbits-1)))*fsr/(2**nbits)
+		out = np.stack((data[0::2], data[1::2]))
+		np.save(outfile, out)
 
-	# let's get all of the peaks from each pixel.
+def open_adc_data(infile) :
+	data = np.load(infile)
+	return data[0], data[1]
+
+def make_fshift(outfile, fo, fs, int_time) :
+
+	l = int(fs*int_time)
+	Wo = 2*np.pi*fo
+	rad = Wo/fs*np.arange(l)
+	out = np.stack((np.sin(rad), np.cos(rad)))
+	np.save(outfile, out)
 
 
-	with open(outfile, 'wb') as output:
-		pickle.dump(obj, output)
-
-def read_object(infile):
-	with open(infile, 'rb') as read:
-		return pickle.load(read)
-
-			
-	
-def plot_timevalues(filename ,start = 0, stop = 300000) :
-
-	data = read_binary(scale = 1.35/2**12, filename=filename) 
-	data
+def read_fshift(infile) :
+	data = np.load(infile)
+	sin = data[0]
+	cos = data[1]
+	return sin, cos
 
 def spectrum2(file, fo = 10e6, fs = 2850e6, nbits=12, int_time=1e-3, n_window=99, plot=False) :
 	'''calculate the fourier spectrum of the adc's digitized signal.
@@ -326,9 +324,8 @@ def spectrum(file, fo = 10e6, fs = 2850e6, int_time=1e-3, int_bw=[1,10e3], plot=
 		fig2_B.show()
 	# return bins_A, index
 
-def ddc(fo = 10e6, fs = 2850e6, bits = 12, int_time=1e-3, ncalc=100, nch=2, 
-	ddc=False, calc=False, xcor=False, plot=False,
-	file = '../ADC_DATA/7_5_external/7_5_2018_10MA_2850MS_extclk.bin') :
+def ddc(file, fo = 10e6, fs = 3000e6, bits = 12, int_time=1e-3, ncalc=100, nch=2, 
+	ddc=False, xcor=False, plot=False, ChA=None, ChB=None, sin=None, cos=None) :
 	
 	''' 
 	this function calculates the resolution of the ADC for measuring 
@@ -372,7 +369,8 @@ def ddc(fo = 10e6, fs = 2850e6, bits = 12, int_time=1e-3, ncalc=100, nch=2,
 
 	# binary channels are written [A,B]_0, [A,B]_1, [A,B]_2.... etc/
 	# to choose a channel pick out every other linearly indexed data point
-	ChA, ChB = read_binary(filename=file, nbits=bits, fsr=1.35, raw=None)
+	# if not (ChA or ChB) :
+	# 	ChA, ChB = read_binary(filename=file, nbits=bits, fsr=1.35, raw=None)
 
 	if ddc :
 
@@ -405,11 +403,13 @@ def ddc(fo = 10e6, fs = 2850e6, bits = 12, int_time=1e-3, ncalc=100, nch=2,
 		npt = ncalc*l # averaging time for the phase. set to integer multiple of the integration window.
 
 		#rad = Wo*np.linspace(0, int_time, l)
-		rad = Wo/fs*np.arange(l) # this way gets the phase values more accurately than linspace 2piFo/Fs*n
 
-		# look up table for sin and cosine values for 1ms window
-		I_phi=np.sin(rad) 
-		Q_phi=np.cos(rad)
+		# if not sin or cos :
+		# 	rad = Wo/fs*np.arange(l) # this way gets the phase values more accurately than linspace 2piFo/Fs*n
+
+		# 	# look up table for sin and cosine values for 1ms window
+		# 	I_phi=np.sin(rad) 
+		# 	Q_phi=np.cos(rad)
 
 		# if fo < 12e6 :
 		# 	# lowpass filtered data for each channel, the 10MHz data is very noisy.
@@ -434,8 +434,8 @@ def ddc(fo = 10e6, fs = 2850e6, bits = 12, int_time=1e-3, ncalc=100, nch=2,
 				# get binary data as int16, scale by adc lsb. even data -> channel A , odd data -> channel B.
 				# then multiply each 1ms window (of length l) by the sin and cos modulating terms.
 				# t represents the appropriate time values. finally, use a lowpass filter on this modulated data.
-				I[start:stop] = Ch[k][start:stop]*I_phi
-				Q[start:stop] = Ch[k][start:stop]*Q_phi
+				I[start:stop] = Ch[k][start:stop]*sin
+				Q[start:stop] = Ch[k][start:stop]*cos
 
 			I_f = lfilter(b1, a1, I)
 			Q_f = lfilter(b1, a1, Q)
@@ -500,9 +500,6 @@ def ddc(fo = 10e6, fs = 2850e6, bits = 12, int_time=1e-3, ncalc=100, nch=2,
 			fig3.show()
 			fig4.show()
 			# fig5.show()
-
-	if calc :
-		pass
 
 	if xcor :
 		r = [[min(avg[0]), max(avg[0])], [min(avg[1]), max(avg[1])]]
