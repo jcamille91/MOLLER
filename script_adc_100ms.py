@@ -67,31 +67,27 @@ def plot(d, x, axis = None) :
 		
 		plt.close()
 
-def read_binary(infile, nbits=12, fsr=1.35, raw=None, outfile=None) :
+def read_binary(infile, outfile, bits=12, fsr=1.35, raw=None) :
 	'''
 	this reads a binary file interpreted as series of 16bit integers, as is the case for our ADC's binary codes.
 	two arrays of data are returned, for the adc's channel A and channel B.
 	input:
 	filename- binary file containing channels A and B. The data is organized:
 	(CHA[n=0], CHB[n=0]), (CHA[n=1], CHB[n=1]), ..., (CHA[n=N], CHB[n=N])
-	nbits- number of bits used by the ADC to construct the data
+	bits- number of bits used by the ADC to construct the data
 	fsr- full scale range of the ADC in volts peak to peak
 	raw- Set to true to return the raw ADC codes instead of converted voltage values
 	'''
-	if not outfile :
-		if raw : 
-			data = np.fromfile(infile, dtype=np.int16, count=-1, sep="")
-		else :
-			data = (np.fromfile(infile, dtype=np.int16, count=-1, sep="")-(2**(nbits-1)))*fsr/(2**nbits)
-		
-		return data[0::2], data[1::2]
+
+	if raw :
+		out = np.fromfile(infile, dtype=np.int16, count=-1, sep="")
 
 	else :
-		data = (np.fromfile(infile, dtype=np.int16, count=-1, sep="")-(2**(nbits-1)))*fsr/(2**nbits)
+		data = (np.fromfile(infile, dtype=np.int16, count=-1, sep="")-(2**(bits-1)))*fsr/(2**bits)
 		out = np.stack((data[0::2], data[1::2]))
 		np.save(outfile, out)
 
-def open_adc_data(infile) :
+def open_binary(infile) :
 	data = np.load(infile)
 	return data[0], data[1]
 
@@ -324,8 +320,8 @@ def spectrum(file, fo = 10e6, fs = 2850e6, int_time=1e-3, int_bw=[1,10e3], plot=
 		fig2_B.show()
 	# return bins_A, index
 
-def ddc(file, fo = 10e6, fs = 3000e6, bits = 12, int_time=1e-3, ncalc=100, nch=2, 
-	ddc=False, xcor=False, plot=False, ChA=None, ChB=None, sin=None, cos=None) :
+def ddc(ChA, ChB, sin, cos, fo = 10e6, fs = 3000e6, bits = 12, int_time=1e-3, ncalc=100, nch=2, 
+	ddc=False, xcor=False, plot=False) :
 	
 	''' 
 	this function calculates the resolution of the ADC for measuring 
@@ -487,10 +483,10 @@ def ddc(file, fo = 10e6, fs = 3000e6, bits = 12, int_time=1e-3, ncalc=100, nch=2
 			# ax5.set_title('Reconstructed Amplitude')
 
 			
-			s.plot(I_A[:len(xaxis)], x = xaxis, axis=ax1)
-			s.plot(Q_A[:len(xaxis)], x = xaxis, axis=ax2)
-			s.plot(I_Af[:len(xaxis)], x = xaxis, axis=ax3)
-			s.plot(Q_Af[:len(xaxis)], x = xaxis, axis=ax4)
+			plot(I[:len(xaxis)], x = xaxis, axis=ax1)
+			plot(Q[:len(xaxis)], x = xaxis, axis=ax2)
+			plot(I_f[:len(xaxis)], x = xaxis, axis=ax3)
+			plot(Q_f[:len(xaxis)], x = xaxis, axis=ax4)
 			# s.plot(a, x = xaxis, axis=ax5)
 
 			
@@ -506,8 +502,6 @@ def ddc(file, fo = 10e6, fs = 3000e6, bits = 12, int_time=1e-3, ncalc=100, nch=2
 		h, xbins, ybins = np.histogram2d(x=avg_A, y=avg_B, bins=None, range=r, normed=None)
 		figc, axc = plt.subplots(1,1)
 
-	# return bins_A, index
-	input("press enter to finish")
-	plt.close('all')
+
 	return avg, rms
 	
