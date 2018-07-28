@@ -7,6 +7,39 @@ import matplotlib.pyplot as plt
 from matplotlib import axes
 ax_obj = axes.Axes
 
+def calibrate(A, B) :
+	''' make a 2D scatter plot of A and B.
+	Fit a line to it to get the slope.
+	input:
+	A- channel A
+	B- channel B
+
+	output:
+	slope- fitted slope of the line
+	'''
+	# reorder the two numpy arrays together, so we can fit them.
+	o = np.argsort(A)
+	A = A[o]
+	B = B[o]
+
+	# 1D polynomial fit (a line)
+	z = np.polyfit(A, B, 1)
+	fit = np.poly1d(z)
+	slope = z[0]
+	offset= z[1]
+
+	print('line has form:', offset, '+', slope, 'x')
+
+	f, a = plt.subplots(1,1)
+	a.scatter(A,B)
+	a.plot(A)
+	f.show()
+
+	input('press enter to finish')
+	return slope, offset
+
+
+
 def define_bessel_lpf(cutoff, fs, order=5, btype='low') :
 	nyq = 0.5 * fs
 	normalized_cutoff = cutoff / nyq
@@ -14,7 +47,6 @@ def define_bessel_lpf(cutoff, fs, order=5, btype='low') :
 	return b, a
 
 def calculate_jitter(ssb_pn, fbins, carrier, units='log') :
-
 	'''function to calculate rms jitter (time domain expression of phase noise).
 	input: 
 
@@ -106,7 +138,87 @@ def read_fshift(infile) :
 	cos = data[1]
 	return sin, cos
 
-def spectrum2(file, fo = 10e6, fs = 2850e6, nbits=12, int_time=1e-3, n_window=99, plot=False) :
+def make_data(outfile, A, fo, fs, jitter_fs, int_time, n_window) :
+	''' create phase noise corrupted signal with appropriate length 
+	input:
+	outfile- string for .npy file storing the created signal
+	A- signal amplitude
+	fo- carrier freq
+	fs- sampling freq
+	jitter_fs- phase jitter in femtoseconds
+	int_time- length of integration window in seconds
+	n_window- number of integration windows
+	'''
+	Wo = 2*np.pi*fo
+	l = int(fs*int_time)
+	npt = n_window*fs
+	carrier= Wo(1.0/fs*np.arange(l) + np.random.normal(loc = 0, scale = t_j*1e-15, size=len(n)))
+	# array of samples. 3GSPS over a 1ms window (the helicity rate/integration time).
+	n = np.linspace(0, n_window*t_flip, int(n_window*t_flip/T_s))
+	#n_avg = int((len(n)-t_off)/n_sample_avg) # number of slices of the data to calculate average amplitude.
+
+	argument = w_c*(n + np.random.normal(loc = 0, scale = t_j, size=len(n)))
+	carrier = A_c*np.cos(argument)
+
+def get_freq(data, fs, int_time, n_window, plot=False) :
+
+	'''
+	'''
+
+	# the channel codes are converted to volts, unless 'raw=True'
+	N = int(fs*int_time)	# number of samples in integration window.
+
+	binwidth = int(1/int_time) # Hz
+	# this indexes the bins to get the desired frequency bins for integrating the phase noise
+	# index = np.linspace(int(int_bw[0]), int(int_bw[1]), int(int_bw[1]-int_bw[0])+1, dtype=int)
+	if (n_window == 1) :
+		bins, power = periodogram(x=data[:N], fs=fs, nfft=None, return_onesided=True, scaling='density')
+		tone_a = np.argmax(power)*binwidth
+		print('frequency resolution = ', binwidth,'Hz')
+		print('Channel A:', tone_a, 'Hz')
+	
+	else :
+		
+		Saa = np.zeros(int(N/2)) # power spectrum of channel A
+
+		for i in range(n_window):
+			print(i)
+			start = int(i*N)
+			stop = int((i+1)*N)
+
+			# get positive frequencies of FFT, normalize by N
+			a = fft(data[start:stop])[:int(N/2)]/N
+			
+			# sum the uncorrelated variances
+			Saa += np.square(np.abs(a))
+
+
+		# divide by the binwidth and the number of spectrums averaged. multiply by 2 for single sided spectrum.
+		# This single-sided power spectral density has units of volts^2/Hz
+		Saa = 2*Saa/n_window/binwidth
+
+		tone_a = np.argmax(Saa)*binwidth
+		print('frequency resolution = ', binwidth,'Hz')
+		print('Channel A:', tone_a, 'Hz')
+
+
+	if plot:
+		fbins = np.linspace(0, fs/2, int(N/2))
+		fig_A, ax_A = plt.subplots(1,1)
+
+		ax_A.set_xlim(1e6, 1e10)
+		ax_A.set_xscale('log')
+		#ax_A.set_yscale('log')
+		ax_A.set_xlabel('Frequency (Hertz)')
+		ax_A.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
+		ax_A.set_title('CH A Noise Spectral Density')
+		ax_A.step(fbins, 10*np.log10(Saa/np.max(Saa)))
+
+
+	
+	return tone_a, bins
+
+def spectrum2(ChA, ChB, fo, fs, nbits=12, int_time=1e-3, n_window=99, plot=False) :
 	'''calculate the fourier spectrum of the adc's digitized signal.
 	convert spectrum to units of dBc/Hz (decibels normalized to the carrier power in 1Hz bandwidth).
 	calculate the jitter contribution in some specified bandwidth relative to the carrier.
@@ -120,7 +232,6 @@ def spectrum2(file, fo = 10e6, fs = 2850e6, nbits=12, int_time=1e-3, n_window=99
 	'''
 
 	# the channel codes are converted to volts, unless 'raw=True'
-	ChA, ChB = read_binary(filename=file, nbits=nbits, fsr=1.35, raw=None)
 	N = int(fs*int_time)	# number of samples in integration window.
 
 	binwidth = int(1/int_time) # Hz
@@ -159,7 +270,7 @@ def spectrum2(file, fo = 10e6, fs = 2850e6, nbits=12, int_time=1e-3, n_window=99
 	fbins = np.linspace(0, fs/2, int(N/2))
 
 	# This spectrum is due to only uncorrelated noise sources.
-	Sdiff = (Saa + Sbb - 2*np.abs(Sba))
+	Sdiff = (Saa + Sbb - 2*Sba)
 
 	# cutoff0 = 13e6
 	# if fo < cutoff0 :
@@ -221,7 +332,7 @@ def spectrum2(file, fo = 10e6, fs = 2850e6, nbits=12, int_time=1e-3, n_window=99
 
 	# tj_A = calculate_jitter(ssb_pn=pn_lin_A[index], fbins=bins_A[index], carrier=fo, units='lin')
 	# tj_B = calculate_jitter(ssb_pn=pn_lin_B[index], fbins=bins_B[index], carrier=fo, units='lin')
-
+	input('press enter to finish')
 
 def spectrum(file, fo = 10e6, fs = 2850e6, int_time=1e-3, int_bw=[1,10e3], plot=False) :
 	'''calculate the fourier spectrum of the adc's digitized signal.
@@ -483,10 +594,10 @@ def ddc(ChA, ChB, sin, cos, fo = 10e6, fs = 3000e6, bits = 12, int_time=1e-3, nc
 			# ax5.set_title('Reconstructed Amplitude')
 
 			
-			plot(I[:len(xaxis)], x = xaxis, axis=ax1)
-			plot(Q[:len(xaxis)], x = xaxis, axis=ax2)
-			plot(I_f[:len(xaxis)], x = xaxis, axis=ax3)
-			plot(Q_f[:len(xaxis)], x = xaxis, axis=ax4)
+			plot(I[:pltlen], x = xaxis, axis=ax1)
+			plot(Q[:pltlen], x = xaxis, axis=ax2)
+			plot(I_f[:pltlen], x = xaxis, axis=ax3)
+			plot(Q_f[:pltlen], x = xaxis, axis=ax4)
 			# s.plot(a, x = xaxis, axis=ax5)
 
 			
