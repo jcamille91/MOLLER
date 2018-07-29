@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from matplotlib import axes
 ax_obj = axes.Axes
 
-def calibrate(A, B) :
+def calibrate(A, B, fsr=1.35, bits=12) :
 	''' make a 2D scatter plot of A and B.
 	Fit a line to it to get the slope.
 	input:
@@ -17,7 +17,7 @@ def calibrate(A, B) :
 	output:
 	slope- fitted slope of the line
 	'''
-	# reorder the two numpy arrays together, so we can fit them.
+	# sort the numpy arrays so we can fit them.
 	o = np.argsort(A)
 	A = A[o]
 	B = B[o]
@@ -27,17 +27,37 @@ def calibrate(A, B) :
 	fit = np.poly1d(z)
 	slope = z[0]
 	offset= z[1]
+	f = lambda x : offset + slope*x
+
 
 	print('line has form:', offset, '+', slope, 'x')
 
-	f, a = plt.subplots(1,1)
-	a.scatter(A,B)
-	a.plot(A)
-	f.show()
+	f1, a1 = plt.subplots(1,1)
+	a1.scatter(A,B, color='blue', label='A/B')
+	a1.plot(A,  f(A), color='red', label='fit')
+	a1.set_xlabel('A (volts)')
+	a1.set_ylabel('B (volts)')
+	a1.set_title('A vs B scatter')
+	a1.legend()
+	f1.show()
+
+	f2, a2 = plt.subplots(1,1)
+	diff = B-(slope*A + offset)
+	val, bins, pat = a2.hist(diff, bins=100)
+	a2.set_xlabel('A (volts)')
+	a2.set_ylabel('A - k*B + Vo (volts)')
+	a2.set_title('calibrated A/B difference histogram')
+	f2.show()
+
+	# sigma = np.std(val*bins)
+	print(bits, 'bit mode.' , fsr, 'volts full scale range.\n')
+	print('1 bit precision = ', fsr/2**bits, 'volts')
+	print('2 bit precision = ', fsr/2**(bits-1), 'volts')
+	print('3 bit precision = ', fsr/2**(bits-2), 'volts\n')
+	# print('A-B distribution:', sigma, 'volts sigma')
 
 	input('press enter to finish')
-	return slope, offset
-
+	return val, bins, slope, offset
 
 
 def define_bessel_lpf(cutoff, fs, order=5, btype='low') :
@@ -334,7 +354,7 @@ def spectrum2(ChA, ChB, fo, fs, nbits=12, int_time=1e-3, n_window=99, plot=False
 	# tj_B = calculate_jitter(ssb_pn=pn_lin_B[index], fbins=bins_B[index], carrier=fo, units='lin')
 	input('press enter to finish')
 
-def spectrum(file, fo = 10e6, fs = 2850e6, int_time=1e-3, int_bw=[1,10e3], plot=False) :
+def spectrum(file, fo = 10e6, fs = 2850e6, int_time=1e-3, int_bw=[1,10e3], plot_en=False) :
 	'''calculate the fourier spectrum of the adc's digitized signal.
 	convert spectrum to units of dBc/Hz (decibels normalized to the carrier power in 1Hz bandwidth).
 	calculate the jitter contribution in some specified bandwidth relative to the carrier.
@@ -432,7 +452,7 @@ def spectrum(file, fo = 10e6, fs = 2850e6, int_time=1e-3, int_bw=[1,10e3], plot=
 	# return bins_A, index
 
 def ddc(ChA, ChB, sin, cos, fo = 10e6, fs = 3000e6, bits = 12, int_time=1e-3, ncalc=100, nch=2, 
-	ddc=False, xcor=False, plot=False) :
+	ddc=False, xcor=False, plot_en=False) :
 	
 	''' 
 	this function calculates the resolution of the ADC for measuring 
@@ -480,11 +500,6 @@ def ddc(ChA, ChB, sin, cos, fo = 10e6, fs = 3000e6, bits = 12, int_time=1e-3, nc
 	# 	ChA, ChB = read_binary(filename=file, nbits=bits, fsr=1.35, raw=None)
 
 	if ddc :
-
-		# this filter is to remove spurs after 10MHz for the reference input.
-		cutoff0 = 13e6
-
-		b0, a0 = define_bessel_lpf(cutoff=cutoff0, fs=fs, order=3)
 		
 		# this lowpass filter is for the digital downconversion
 		cutoff = 1e4
@@ -509,20 +524,6 @@ def ddc(ChA, ChB, sin, cos, fo = 10e6, fs = 3000e6, bits = 12, int_time=1e-3, nc
 		l = int(int_time*fs)
 		npt = ncalc*l # averaging time for the phase. set to integer multiple of the integration window.
 
-		#rad = Wo*np.linspace(0, int_time, l)
-
-		# if not sin or cos :
-		# 	rad = Wo/fs*np.arange(l) # this way gets the phase values more accurately than linspace 2piFo/Fs*n
-
-		# 	# look up table for sin and cosine values for 1ms window
-		# 	I_phi=np.sin(rad) 
-		# 	Q_phi=np.cos(rad)
-
-		# if fo < 12e6 :
-		# 	# lowpass filtered data for each channel, the 10MHz data is very noisy.
-		# 	Ch = np.array([lfilter(b0, a0, ChA[:npt]), lfilter(b0, a0, ChB[:npt])])
-		# 	# for now, now more filtering for the high frequency data. maybe bandpass if necessary.
-		# else :
 		Ch = np.array([ChA[:npt], ChB[:npt]])
 
 		I=np.zeros(len(Ch[0]))
@@ -563,7 +564,7 @@ def ddc(ChA, ChB, sin, cos, fo = 10e6, fs = 3000e6, bits = 12, int_time=1e-3, nc
 
 
 	
-		if plot :
+		if plot_en :
 
 			pltlen = 900000
 			xaxis = np.arange(pltlen)*Ts*1.0e6
