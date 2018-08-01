@@ -2,7 +2,7 @@ import pickle
 import numpy as np
 from scipy.fftpack import fft
 from scipy.integrate import trapz
-from scipy.signal import medfilt, butter, bessel, lfilter, freqz, decimate, periodogram, welch
+from scipy.signal import medfilt, butter, bessel, firwin, lfilter, freqz, decimate, periodogram, welch
 import matplotlib.pyplot as plt
 from matplotlib import axes
 ax_obj = axes.Axes
@@ -59,6 +59,27 @@ def calibrate(A, B, fsr=1.35, bits=12) :
 	input('press enter to finish')
 	return val, bins, slope, offset
 
+def define_fir_hpf(numtap, cutoff_R, fs) :
+	nyq = 0.5 * fs
+	normalized_cutoff = cutoff / nyq
+	b = firwin(numtap, normalized_cutoff, pass_zero=False)
+	a = 1
+	return b, a
+
+def define_fir_bpf(numtap, cutoff_L, cutoff_R, fs) :
+	nyq = 0.5 * fs
+	normalized_cutoff_L = cutoff_L / nyq
+	normalized_cutoff_R = cutoff_R / nyq
+	b = firwin(numtap, (normalized_cutoff_L, normalized_cutoff_R), pass_zero=False)
+	a = 1
+	return b, a
+
+def define_fir_lpf(numtap, cutoff, fs) :
+	nyq = 0.5 * fs
+	normalized_cutoff = cutoff / nyq
+	b = firwin(numtap, normalized_cutoff)
+	a = 1
+	return b, a
 
 def define_bessel_lpf(cutoff, fs, order=5, btype='low') :
 	nyq = 0.5 * fs
@@ -130,7 +151,8 @@ def read_binary(infile, outfile, bits=12, fsr=1.35, raw=None) :
 	fsr- full scale range of the ADC in volts peak to peak
 	raw- Set to true to return the raw ADC codes instead of converted voltage values
 	'''
-
+	maxcode = 2**bits
+	secondcode = 2**(bits-1)
 	if raw :
 		out = np.fromfile(infile, dtype=np.int16, count=-1, sep="")
 
@@ -502,7 +524,7 @@ def ddc(ChA, ChB, sin, cos, fo = 10e6, fs = 3000e6, bits = 12, int_time=1e-3, nc
 	if ddc :
 		
 		# this lowpass filter is for the digital downconversion
-		cutoff = 1e6
+		cutoff = 1e2
 
 		b1, a1 = define_bessel_lpf(cutoff=cutoff, fs=fs, order=3)
 		# w, h = freqz(b1, a1, worN=3000000)
@@ -617,8 +639,8 @@ def ddc(ChA, ChB, sin, cos, fo = 10e6, fs = 3000e6, bits = 12, int_time=1e-3, nc
 
 	return avg, rms
 
-def ddc2(ChA, ChB, fo = 10e6, fs = 3000e6, bits = 12, int_time=1e-3, ncalc=100, nch=2, 
-	ddc=False, xcor=False, plot_en=False, plot_off=False) :
+def ddc2(ChA, ChB, fo, lpf_fc = 1e3, hpf_fc = 1.1e9, fs = 3000e6, bits = 12, int_time=1e-3, ncalc=100, nch=2, 
+	ddc=False, xcor=False, plot_len=3e6, plot_en=False, plot_off=False) :
 	
 	''' 
 	this function calculates the resolution of the ADC for measuring 
@@ -668,22 +690,24 @@ def ddc2(ChA, ChB, fo = 10e6, fs = 3000e6, bits = 12, int_time=1e-3, ncalc=100, 
 	if ddc :
 		
 		# this lowpass filter is for the digital downconversion
-		cutoff = 1e6
-
-		b1, a1 = define_bessel_lpf(cutoff=cutoff, fs=fs, order=3)
-		# w, h = freqz(b1, a1, worN=3000000)
-		# figf, axf = plt.subplots(1,1)
-		# axf.plot(0.5*fs*w/np.pi, np.abs(h), 'b')
-		# axf.plot(cutoff, 0.5*np.sqrt(2), 'ko')
-		# axf.axvline(cutoff, color='k')
-		# axf.set_xlim(0, 0.5*fs)
-		# axf.set_title("Lowpass Filter Frequency Response")
-		# axf.set_xlabel('Frequency [Hz]')
-		# axf.grid()
-		# figf.show()
+		cutoff = lpf_fc
+		b0, a0 = define_fir_lpf(numtap=15, cutoff=lpf_fc, fs=fs)
+		b1, a1 = define_bessel_lpf(cutoff=lpf_fc, fs=fs, order=5)
+		# b2, a2 = define_fir_hpf(numtap=15, cutoff=hpf_fc, fs)
+		w, h = freqz(b0, a0, worN=3000000)
+		figf, axf = plt.subplots(1,1)
+		axf.plot(0.5*fs*w/np.pi, np.abs(h), 'b')
+		axf.plot(cutoff, 0.5*np.sqrt(2), 'ko')
+		axf.axvline(cutoff, color='k')
+		axf.set_xlim(0, 0.5*fs)
+		axf.set_title("Lowpass Filter Frequency Response")
+		axf.set_xlabel('Frequency [Hz]')
+		axf.grid()
+		figf.show()
 
 		# arrays to store average amplitudes and sigma (2 channels)
 		avg = np.zeros((nch,ncalc))
+		avg2 = np.zeros((nch,ncalc))
 		rms = np.zeros(nch)
 
 		# number of samples in 1ms window
@@ -715,11 +739,11 @@ def ddc2(ChA, ChB, fo = 10e6, fs = 3000e6, bits = 12, int_time=1e-3, ncalc=100, 
 				I[start:stop] = Ch[k][start:stop]*I_shift
 				Q[start:stop] = Ch[k][start:stop]*Q_shift
 
-			I_f = lfilter(b1, a1, I)
-			Q_f = lfilter(b1, a1, Q)
+			I_f = lfilter(b0, a0, I)
+			Q_f = lfilter(b0, a0, Q)
 		
 
-			phase = np.arctan(-I_f[:npt]/Q_f[:npt])	
+			phase = np.arctan(I_f[:npt]/Q_f[:npt])	
 			avg_phase = np.mean(phase)
 
 			for i in range(ncalc) :
@@ -727,7 +751,9 @@ def ddc2(ChA, ChB, fo = 10e6, fs = 3000e6, bits = 12, int_time=1e-3, ncalc=100, 
 				stop = (i+1)*l
 				# average amplitude recovered from I,Q components
 				a = 2*(Q_f[start:stop]*np.cos(avg_phase) + I_f[start:stop]*np.sin(avg_phase))
+				a2 = np.hypot(I_f[start:stop], Q_f[start:stop])
 				avg[k][i] = np.mean(a)
+				avg2[k][i] = np.mean(a2)
 
 			# sigma of the distribution of average amplitudes		
 			rms[k] = np.std(avg[k])
@@ -736,28 +762,28 @@ def ddc2(ChA, ChB, fo = 10e6, fs = 3000e6, bits = 12, int_time=1e-3, ncalc=100, 
 
 	
 		if plot_en :
-
-			pltlen = 1500000
-			xaxis = np.arange(pltlen)
+			plot_len = int(plot_len)
+			xaxis = np.arange(plot_len)
 
 			# offset by a millisecond window worth of samples, the filters take time to settle so the first
 			# window shows transient effects we aren't interested in.
 			if plot_off : 
-				plt_start = pltlen + int(1e-3*fs) 
+				plt_start = int(1e-3*fs) 
 			else :
-				plt_start = pltlen
+				plt_start = 0
 
 			print('sample spacing =', Ts*1e9, 'nanoseconds')
 
-			fig0, (ax01,ax02) = plt.subplots(1,2)
-			ax01.set_xlabel('samples')
-			ax01.set_ylabel('volts')
-			ax01.set_title('adc channel A raw data')
-			ax02.set_xlabel('samples')
-			ax02.set_ylabel('volts')
-			ax02.set_title('adc channel B raw data')
-
+			figA, axA = plt.subplots(1,1)
+			axA.set_xlabel('samples')
+			axA.set_ylabel('volts')
+			axA.set_title('adc channel A raw data')
 			
+			figB, axB = plt.subplots(1,1)
+			axB.set_xlabel('samples')
+			axB.set_ylabel('volts')
+			axB.set_title('adc channel B raw data')
+
 
 			fig1, ax1 = plt.subplots(1,1)	
 			ax1.set_xlabel('samples')
@@ -785,7 +811,9 @@ def ddc2(ChA, ChB, fo = 10e6, fs = 3000e6, bits = 12, int_time=1e-3, ncalc=100, 
 			ax5.set_title('Reconstructed Amplitude')
 
 			start = plt_start
-			stop = plt_start + pltlen
+			stop = plt_start + plot_len
+			plot(ChA[:plot_len], x = xaxis, axis=axA)
+			# plot(ChB[:plotlen], x = xaxis, axis=axB)
 			plot(I[start:stop], x = xaxis, axis=ax1)
 			plot(Q[start:stop], x = xaxis, axis=ax2)
 			plot(I_f[start:stop], x = xaxis, axis=ax3)
@@ -793,7 +821,8 @@ def ddc2(ChA, ChB, fo = 10e6, fs = 3000e6, bits = 12, int_time=1e-3, ncalc=100, 
 			plot(a[:stop], x = xaxis, axis=ax5)
 
 			
-			fig0.show()
+			figA.show()
+			# figB.show()
 			fig1.show()
 			fig2.show()
 			fig3.show()
@@ -806,5 +835,5 @@ def ddc2(ChA, ChB, fo = 10e6, fs = 3000e6, bits = 12, int_time=1e-3, ncalc=100, 
 		figc, axc = plt.subplots(1,1)
 
 
-	return avg, rms
+	return avg, avg2, rms
 	
