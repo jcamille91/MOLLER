@@ -189,7 +189,7 @@ def make_data(outfile, A, fo, fs, jitter_fs, int_time, n_window) :
 	argument = w_c*(n + np.random.normal(loc = 0, scale = t_j, size=len(n)))
 	carrier = A_c*np.cos(argument)
 
-def get_freq(data, fs, int_time, n_window, plot=False) :
+def get_freq(data, fo_guess, ssb_bw_guess, fs, int_time, n_window, plot=False) :
 
 	'''
 	'''
@@ -200,35 +200,24 @@ def get_freq(data, fs, int_time, n_window, plot=False) :
 	binwidth = int(1/int_time) # Hz
 	# this indexes the bins to get the desired frequency bins for integrating the phase noise
 	# index = np.linspace(int(int_bw[0]), int(int_bw[1]), int(int_bw[1]-int_bw[0])+1, dtype=int)
-	if (n_window == 1) :
-		bins, power = periodogram(x=data[:N], fs=fs, nfft=None, return_onesided=True, scaling='density')
-		tone_a = np.argmax(power)*binwidth
-		print('frequency resolution = ', binwidth,'Hz')
-		print('Channel A:', tone_a, 'Hz')
+
+	v = rfft(x=data[:N], n=None)
+
+	center = int(fo_guess*int_time)
+	left = center - int(ssb_guess*int_time)
+	right = center + int(ssb_guess*int_time)
 	
-	else :
-		
-		Saa = np.zeros(int(N/2)) # power spectrum of channel A
+	tone_i = np.argmax(v[left:right])
+	tone_f = tone_i*binwidth
+	# bins, power = periodogram(x=data[:N], fs=fs, nfft=None, return_onesided=True, scaling='density')
+	# tone_f = np.argmax(power)*binwidth
 
-		for i in range(n_window):
-			print(i)
-			start = int(i*N)
-			stop = int((i+1)*N)
-
-			# get positive frequencies of FFT, normalize by N
-			a = fft(data[start:stop])[:int(N/2)]/N
-			
-			# sum the uncorrelated variances
-			Saa += np.square(np.abs(a))
-
-
-		# divide by the binwidth and the number of spectrums averaged. multiply by 2 for single sided spectrum.
-		# This single-sided power spectral density has units of volts^2/Hz
-		Saa = 2*Saa/n_window/binwidth
-
-		tone_a = np.argmax(Saa)*binwidth
-		print('frequency resolution = ', binwidth,'Hz')
-		print('Channel A:', tone_a, 'Hz')
+	print(len(data[:N]), 'data points\n')
+	print(len(v), 'fft bins\n')
+	print('frequency resolution = ', binwidth,'Hz\n')
+	print('calculated frequency:', tone_a, 'Hz')
+	
+	
 
 
 	if plot:
@@ -241,11 +230,11 @@ def get_freq(data, fs, int_time, n_window, plot=False) :
 		ax_A.set_xlabel('Frequency (Hertz)')
 		ax_A.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
 		ax_A.set_title('CH A Noise Spectral Density')
-		ax_A.step(fbins, 10*np.log10(Saa/np.max(Saa)))
+		ax_A.step(fbins, 10*np.log10(2*np.square(v)/(N*binwidth))
 
 
 	
-	return tone_a
+	return tone_f
 
 def xcor_spectrum(ChA, ChB, fo, fs, nbits=12, int_time=1e-3, n_window=99, plot=False) :
 	'''calculate the fourier spectrum of the adc's digitized signal.
@@ -535,7 +524,7 @@ plot_en, plot_len, plot_win) :
 		
 	# this lowpass filter is for the digital downconversion
 	cutoff = lpf_fc
-	b0, a0 = define_fir_lpf(numtap=100, cutoff=lpf_fc, fs=fs)
+	b0, a0 = define_fir_lpf(numtap=lpf_ntaps, cutoff=lpf_fc, fs=fs)
 	# b2, a2 = define_fir_hpf(numtap=15, cutoff=hpf_fc, fs)
 	w, h = freqz(b0, a0, worN=3000000)
 	figf, axf = plt.subplots(1,1)
@@ -583,18 +572,20 @@ plot_en, plot_len, plot_win) :
 
 		phase_npt = int(phase_time*fs)
 		for i in range(ncalc) :
+		
+			c = i*l
+			d = i*l + calc_off
+			e = (i+1)*l
 
-			c = i*l + calc_off
-			d = (i+1)*l
-			e = i*l
-			avg_phi = np.mean(np.arctan(I_f[c:e+phase_npt]/Q_f[c:e+phase_npt]))
-
-			# average amplitude recovered from I,Q components
+			avg_phi = np.mean(np.arctan(I_f[d:c+phase_npt]/Q_f[d:c+phase_npt]))
 			
 			# phase based reconstruction
-			a = 2*(Q_f[c:d]*np.cos(avg_phi) + I_f[c:d]*np.sin(avg_phi))
+			a = 2*(Q_f[d:e]*np.cos(avg_phi) + I_f[d:e]*np.sin(avg_phi))
+		
 			# pythagorean reconstruction
-			a2 = np.hypot(I_f[c:d], Q_f[c:d])
+			a2 = np.hypot(I_f[d:e], Q_f[d:e])
+
+			# average amplitude recovered from I,Q components
 			avg[k][i] = np.mean(a)
 			avg2[k][i] = np.mean(a2)
 
@@ -684,7 +675,7 @@ plot_en, plot_len, plot_win) :
 	
 	# this lowpass filter is for the digital downconversion
 	cutoff = lpf_fc
-	b0, a0 = define_fir_lpf(numtap=100, cutoff=lpf_fc, fs=fs)
+	b0, a0 = define_fir_lpf(numtap=lpf_ntaps, cutoff=lpf_fc, fs=fs)
 	# show the frequency magnitude response
 	w, h = freqz(b0, a0, worN=3000000)
 	figf, axf = plt.subplots(1,1)
