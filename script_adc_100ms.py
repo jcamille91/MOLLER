@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from matplotlib import axes
 ax_obj = axes.Axes
 
-def calibrate(A, B, fsr=1.35, bits=12) :
+def calibrate(A, B, fsr=1.35, bits=12, ax1=None, ax2=None) :
 	''' make a 2D scatter plot of A and B.
 	Fit a line to it to get the slope.
 	input:
@@ -56,15 +56,8 @@ def calibrate(A, B, fsr=1.35, bits=12) :
 	print('3 bit precision = ', fsr/2**(bits-2), 'volts\n')
 	# print('A-B distribution:', sigma, 'volts sigma')
 
-	input('press enter to finish')
+	input('press enter to finish calibration')
 	return val, bins, slope, offset
-
-def define_fir_hpf(numtap, cutoff_R, fs) :
-	nyq = 0.5 * fs
-	normalized_cutoff = cutoff / nyq
-	b = firwin(numtap, normalized_cutoff, pass_zero=False)
-	a = 1
-	return b, a
 
 def define_fir_bpf(numtap, cutoff_L, cutoff_R, fs) :
 	nyq = 0.5 * fs
@@ -79,12 +72,6 @@ def define_fir_lpf(numtap, cutoff, fs) :
 	normalized_cutoff = cutoff / nyq
 	b = firwin(numtap, normalized_cutoff)
 	a = 1
-	return b, a
-
-def define_bessel_lpf(cutoff, fs, order=5, btype='low') :
-	nyq = 0.5 * fs
-	normalized_cutoff = cutoff / nyq
-	b, a = bessel(order, normalized_cutoff, btype='low', analog=False)
 	return b, a
 
 def calculate_jitter(ssb_pn, fbins, carrier, units='log') :
@@ -152,12 +139,12 @@ def read_binary(infile, outfile, bits=12, fsr=1.35, raw=None) :
 	raw- Set to true to return the raw ADC codes instead of converted voltage values
 	'''
 	maxcode = 2**bits
-	secondcode = 2**(bits-1)
+	midpoint = 2**(bits-1)
 	if raw :
 		out = np.fromfile(infile, dtype=np.int16, count=-1, sep="")
 
 	else :
-		data = (np.fromfile(infile, dtype=np.int16, count=-1, sep="")-(2**(bits-1)))*fsr/(2**bits)
+		data = (np.fromfile(infile, dtype=np.int16, count=-1, sep="")-(midpoint))*fsr/(maxcode)
 		out = np.stack((data[0::2], data[1::2]))
 		np.save(outfile, out)
 
@@ -258,9 +245,9 @@ def get_freq(data, fs, int_time, n_window, plot=False) :
 
 
 	
-	return tone_a, bins
+	return tone_a
 
-def spectrum2(ChA, ChB, fo, fs, nbits=12, int_time=1e-3, n_window=99, plot=False) :
+def xcor_spectrum(ChA, ChB, fo, fs, nbits=12, int_time=1e-3, n_window=99, plot=False) :
 	'''calculate the fourier spectrum of the adc's digitized signal.
 	convert spectrum to units of dBc/Hz (decibels normalized to the carrier power in 1Hz bandwidth).
 	calculate the jitter contribution in some specified bandwidth relative to the carrier.
@@ -473,8 +460,52 @@ def spectrum(file, fo = 10e6, fs = 2850e6, int_time=1e-3, int_bw=[1,10e3], plot_
 		fig2_B.show()
 	# return bins_A, index
 
-def ddc(ChA, ChB, sin, cos, fo = 10e6, fs = 3000e6, bits = 12, int_time=1e-3, ncalc=100, nch=2, 
-	ddc=False, xcor=False, plot_en=False) :
+def res_plot(A_avg, B_avg, ax_h=None, ax_s=None) :
+	
+	'''
+	make histogram of the ratio of average amplitudes to show the adc resolution
+	make a scatter plot of the average amplitudes of the two adc channels.
+	'''
+
+	A = A_avg/B_avg
+	n=len(A)
+
+
+
+	if ax_h == ax_obj:
+		bins, vals, pat = ax_h.hist(x=A, bins=None, range=None)
+		ax_h.set_xlabel('(A/B)_avg')		
+		ax_h.set_ylabel('number of events')
+		ax_h.set_title('(A_avg / B_avg) histogram')
+	else :
+		fig_h, ax_h = plt.subplots(1,1)
+		bins, vals, pat = ax_h.hist(x=A, bins=None, range=None)
+		ax_h.set_xlabel('samples')
+		ax_h.set_ylabel('volts')
+		ax_h.set_title('(A_avg / B_avg) histogram')
+		fig_h.show()
+
+
+	if ax_s == ax_obj:
+		ax_s.scatter(x=A_avg, y=B_avg, marker='x')
+		ax_s.set_xlabel('Channel A')
+		ax_s.set_ylabel('Channel B')
+		ax_s.set_title('(average amplitude scatter')	
+	else :
+		fig_s, ax_s = plt.subplots(1,1)
+		ax_s.scatter(x=A_avg, y=B_avg, marker='x')
+		ax_s.set_xlabel('Channel A')
+		ax_s.set_ylabel('Channel B')
+		ax_s.set_title('(average amplitude scatter')
+		fig_s.show()
+		input('press enter to close resolution plots')
+
+	rms = np.std(A)
+	print('resolution = ', rms, 'sigma')
+
+
+def ddc2(ChA, ChB, fo, lpf_fc, lpf_ntaps, fs, bits, int_time, ncalc, calc_off, phase_time, nch, 
+plot_en, plot_len, plot_win) :
 	
 	''' 
 	this function calculates the resolution of the ADC for measuring 
@@ -488,27 +519,6 @@ def ddc(ChA, ChB, sin, cos, fo = 10e6, fs = 3000e6, bits = 12, int_time=1e-3, nc
 	ncalc- number of amplitudes (integration windows) to calculate
 	file- string of binary file containing data for channels A and B for the ADC
 	'''	
-
-# fo = 10e6
-# fs = 2850e6
-# bits = 12
-# int_time=1e-3 
-# ncalc=100
-# spectrum=False 
-# ddc=True
-# calc=False
-# xcor=False 
-# plot=True
-# file = '../ADC_DATA/6_27_internal/6_27_2018_1d4GA_2949d12GS_littlesplitter.bin'
-# file = '../ADC_DATA/6_27_external/6_27_2018_10MA_2850GS_clkfilter.bin'
-# file = '../ADC_DATA/7_2_internal/7_2_2018_1d4GA_2949d12GS_littlesplitter_5dBm_run2.bin'
-# file = '../ADC_DATA/7_5_internal/7_5_2018_1024MA_3072MS_15dBm.bin'
-# file = '../ADC_DATA/7_5_external/7_5_2018_10MA_2850MS_extclk.bin'
-# ADC input voltage is the output code (16bit integer) * LSB
-# The Least Significant Bit is the full scale range divided by the number of available total bits (12 or 14 depending on mode)
-	fsr = 1.35
-	lsb_adc = fsr/(2**bits)
-	maxcode = (2**bits)-1
 		
 	Wo = 2*np.pi*fo	
 	Ts= 1/fs
@@ -521,127 +531,138 @@ def ddc(ChA, ChB, sin, cos, fo = 10e6, fs = 3000e6, bits = 12, int_time=1e-3, nc
 	# if not (ChA or ChB) :
 	# 	ChA, ChB = read_binary(filename=file, nbits=bits, fsr=1.35, raw=None)
 
-	if ddc :
+
 		
-		# this lowpass filter is for the digital downconversion
-		cutoff = 1e2
+	# this lowpass filter is for the digital downconversion
+	cutoff = lpf_fc
+	b0, a0 = define_fir_lpf(numtap=100, cutoff=lpf_fc, fs=fs)
+	# b2, a2 = define_fir_hpf(numtap=15, cutoff=hpf_fc, fs)
+	w, h = freqz(b0, a0, worN=3000000)
+	figf, axf = plt.subplots(1,1)
+	axf.plot(0.5*fs*w/np.pi, np.abs(h), 'b')
+	axf.plot(cutoff, 0.5*np.sqrt(2), 'ko')
+	axf.axvline(cutoff, color='k')
+	axf.set_xlim(0, 0.5*fs)
+	axf.set_title("Lowpass Filter Frequency Response")
+	axf.set_xlabel('Frequency [Hz]')
+	axf.grid()
+	figf.show()
 
-		b1, a1 = define_bessel_lpf(cutoff=cutoff, fs=fs, order=3)
-		# w, h = freqz(b1, a1, worN=3000000)
-		# figf, axf = plt.subplots(1,1)
-		# axf.plot(0.5*fs*w/np.pi, np.abs(h), 'b')
-		# axf.plot(cutoff, 0.5*np.sqrt(2), 'ko')
-		# axf.axvline(cutoff, color='k')
-		# axf.set_xlim(0, 0.5*fs)
-		# axf.set_title("Lowpass Filter Frequency Response")
-		# axf.set_xlabel('Frequency [Hz]')
-		# axf.grid()
-		# figf.show()
+	# arrays to store average amplitudes and sigma (2 channels)
+	avg = np.zeros((nch,ncalc))
+	avg2 = np.zeros((nch,ncalc))
+	rms = np.zeros(nch)
 
-		# arrays to store average amplitudes and sigma (2 channels)
-		avg = np.zeros((nch,ncalc))
-		rms = np.zeros(nch)
+	# number of samples in 1ms window
+	l = int(int_time*fs)
+	npt = ncalc*l # averaging time for the phase. set to integer multiple of the integration window.
 
-		# number of samples in 1ms window
-		l = int(int_time*fs)
-		npt = ncalc*l # averaging time for the phase. set to integer multiple of the integration window.
+	Ch = np.array([ChA[:npt], ChB[:npt]])
 
-		Ch = np.array([ChA[:npt], ChB[:npt]])
+	rad = Wo/fs*np.arange(l)
+	I_shift= np.sin(rad) 
+	Q_shift = np.cos(rad)
 
-		I=np.zeros(len(Ch[0]))
-		Q=np.zeros(len(Ch[0]))
+	I=np.zeros(len(Ch[0]))
+	Q=np.zeros(len(Ch[0]))
 
-		for k in range(nch):
+	for k in range(nch):
+
+		for i in range(ncalc) :
+
+			y = (i*l)
+			z = (i+1)*l
+
+			# multiply each window (of length l) by the sin and cos modulating terms.
+			I[y:z] = Ch[k][y:z]*I_shift
+			Q[y:z] = Ch[k][y:z]*Q_shift
+
+		# low pass filter frequency down-mixed data
+		I_f = lfilter(b0, a0, I)
+		Q_f = lfilter(b0, a0, Q)
+
+		phase_npt = int(phase_time*fs)
+		for i in range(ncalc) :
+
+			c = i*l + calc_off
+			d = (i+1)*l
+			e = i*l
+			avg_phi = np.mean(np.arctan(I_f[c:e+phase_npt]/Q_f[c:e+phase_npt]))
+
+			# average amplitude recovered from I,Q components
+			
+			# phase based reconstruction
+			a = 2*(Q_f[c:d]*np.cos(avg_phi) + I_f[c:d]*np.sin(avg_phi))
+			# pythagorean reconstruction
+			a2 = np.hypot(I_f[c:d], Q_f[c:d])
+			avg[k][i] = np.mean(a)
+			avg2[k][i] = np.mean(a2)
+
 	
-			for i in range(ncalc) :
-				# we do i+1 onward to avoid the first dataset being affected by the lowpass filter settling time.
-				# start = i+1*l
-				# stop = (i+2)*l
+	if plot_en :
 
-				start = i*l
-				stop = (i+1)*l
+		off = plot_win*l
+		plot_len = int(plot_len)
+		xaxis = np.arange(plot_len)
 
-				# get binary data as int16, scale by adc lsb. even data -> channel A , odd data -> channel B.
-				# then multiply each 1ms window (of length l) by the sin and cos modulating terms.
-				# t represents the appropriate time values. finally, use a lowpass filter on this modulated data.
-				I[start:stop] = Ch[k][start:stop]*sin
-				Q[start:stop] = Ch[k][start:stop]*cos
+		print('sample spacing =', Ts*1e9, 'nanoseconds')
+		begin = off
+		end = off + plot_len
+		figA, axA = plt.subplots(1,1)
+		axA.set_xlabel('samples')
+		axA.set_ylabel('volts')
+		axA.set_title('adc channel A raw data')
+		plot(ChA[begin:end], x = xaxis, axis=axA)
+		figA.show()
 
-			I_f = lfilter(b1, a1, I)
-			Q_f = lfilter(b1, a1, Q)
+		# figB, axB = plt.subplots(1,1)
+		# axB.set_xlabel('samples')
+		# axB.set_ylabel('volts')
+		# axB.set_title('adc channel B raw data')
+		# plot(ChB[begin:end], x = xaxis, axis=axB)
+		# figB.show()
+
+		fig1, ax1 = plt.subplots(1,1)	
+		ax1.set_xlabel('samples')
+		ax1.set_ylabel('amplitude')
+		ax1.set_title('I component')
+		plot(I[begin:end], x = xaxis, axis=ax1)
+		fig1.show()
+
+		fig2, ax2 = plt.subplots(1,1)
+		ax2.set_xlabel('samples')
+		ax2.set_ylabel('amplitude')
+		ax2.set_title('Q component')
+		plot(Q[begin:end], x = xaxis, axis=ax2)
+		fig2.show()
+
+		fig3, ax3 = plt.subplots(1,1)
+		ax3.set_xlabel('samples')
+		ax3.set_ylabel('amplitude')
+		ax3.set_title('I component (filtered)')
+		plot(I_f[begin:end], x = xaxis, axis=ax3)
+		fig3.show()
+
+		fig4, ax4 = plt.subplots(1,1)
+		ax4.set_xlabel('samples')
+		ax4.set_ylabel('amplitude')
+		ax4.set_title('Q component (filtered)')
+		plot(Q_f[begin:end], x = xaxis, axis=ax4)
+		fig4.show()
 		
-
-			phase = np.arctan(-I_f[:npt]/Q_f[:npt])	
-			avg_phase = np.mean(phase)
-
-			for i in range(ncalc) :
-				start = i*l
-				stop = (i+1)*l
-				# average amplitude recovered from I,Q components
-				avg[k][i] = np.mean(2*(Q_f[start:stop]*np.cos(avg_phase) + I_f[start:stop]*np.sin(avg_phase)))
-
-			# sigma of the distribution of average amplitudes		
-			rms[k] = np.std(avg[k])
-			print('sigma error =', rms[k])
+		# fig5, ax5 = plt.subplots(1,1)
+		# ax5.set_xlabel('samples')
+		# ax5.set_ylabel('amplitude')
+		# ax5.set_title('Reconstructed Amplitude')
+		# plot(a[begin:end], x = xaxis, axis=ax5)
+		# fig5.show()
 
 
-	
-		if plot_en :
+	return avg, avg2, rms
 
-			pltlen = 1500000
-			xaxis = np.arange(pltlen)*Ts*1.0e6
+def ddc3(ChA, ChB, fo, lpf_fc, lpf_ntaps, fs, bits, int_time, ncalc, calc_off, phase_time, nch, 
+plot_en, plot_len, plot_win) :
 
-			fig1, ax1 = plt.subplots(1,1)	
-			ax1.set_xlabel('microseconds')
-			ax1.set_ylabel('amplitude')
-			ax1.set_title('I component')
-			
-			fig2, ax2 = plt.subplots(1,1)
-			ax2.set_xlabel('microseconds')
-			ax2.set_ylabel('amplitude')
-			ax2.set_title('Q component')
-			
-			fig3, ax3 = plt.subplots(1,1)
-			ax3.set_xlabel('microseconds')
-			ax3.set_ylabel('amplitude')
-			ax3.set_title('I component (filtered)')
-			
-			fig4, ax4 = plt.subplots(1,1)
-			ax4.set_xlabel('microseconds')
-			ax4.set_ylabel('amplitude')
-			ax4.set_title('Q component (filtered)')
-			
-			# fig5, ax5 = plt.subplots(1,1)
-			# ax5.set_xlabel('microseconds')
-			# ax5.set_ylabel('amplitude')
-			# ax5.set_title('Reconstructed Amplitude')
-
-			
-			plot(I[:pltlen], x = xaxis, axis=ax1)
-			plot(Q[:pltlen], x = xaxis, axis=ax2)
-			plot(I_f[:pltlen], x = xaxis, axis=ax3)
-			plot(Q_f[:pltlen], x = xaxis, axis=ax4)
-			# s.plot(a, x = xaxis, axis=ax5)
-
-			
-
-			fig1.show()
-			fig2.show()
-			fig3.show()
-			fig4.show()
-			# fig5.show()
-
-	if xcor :
-		r = [[min(avg[0]), max(avg[0])], [min(avg[1]), max(avg[1])]]
-		h, xbins, ybins = np.histogram2d(x=avg_A, y=avg_B, bins=None, range=r, normed=None)
-		figc, axc = plt.subplots(1,1)
-
-
-	return avg, rms
-
-def ddc2(ChA, ChB, fo, lpf_fc = 1e3, hpf_fc = 1.1e9, fs = 3000e6, bits = 12, int_time=1e-3, ncalc=100, nch=2, 
-	ddc=False, xcor=False, plot_len=3e6, plot_en=False, plot_off=False) :
-	
 	''' 
 	this function calculates the resolution of the ADC for measuring 
 	the digitally down converted amplitudes (in 1ms windows)
@@ -655,185 +676,134 @@ def ddc2(ChA, ChB, fo, lpf_fc = 1e3, hpf_fc = 1.1e9, fs = 3000e6, bits = 12, int
 	file- string of binary file containing data for channels A and B for the ADC
 	'''	
 
-# fo = 10e6
-# fs = 2850e6
-# bits = 12
-# int_time=1e-3 
-# ncalc=100
-# spectrum=False 
-# ddc=True
-# calc=False
-# xcor=False 
-# plot=True
-# file = '../ADC_DATA/6_27_internal/6_27_2018_1d4GA_2949d12GS_littlesplitter.bin'
-# file = '../ADC_DATA/6_27_external/6_27_2018_10MA_2850GS_clkfilter.bin'
-# file = '../ADC_DATA/7_2_internal/7_2_2018_1d4GA_2949d12GS_littlesplitter_5dBm_run2.bin'
-# file = '../ADC_DATA/7_5_internal/7_5_2018_1024MA_3072MS_15dBm.bin'
-# file = '../ADC_DATA/7_5_external/7_5_2018_10MA_2850MS_extclk.bin'
-# ADC input voltage is the output code (16bit integer) * LSB
-# The Least Significant Bit is the full scale range divided by the number of available total bits (12 or 14 depending on mode)
-	fsr = 1.35
-	lsb_adc = fsr/(2**bits)
-	maxcode = (2**bits)-1
-		
 	Wo = 2*np.pi*fo	
 	Ts= 1/fs
 
 
 	binwidth = int(1/int_time)
-
-	# binary channels are written [A,B]_0, [A,B]_1, [A,B]_2.... etc/
-	# to choose a channel pick out every other linearly indexed data point
-	# if not (ChA or ChB) :
-	# 	ChA, ChB = read_binary(filename=file, nbits=bits, fsr=1.35, raw=None)
-
-	if ddc :
-		
-		# this lowpass filter is for the digital downconversion
-		cutoff = lpf_fc
-		b0, a0 = define_fir_lpf(numtap=15, cutoff=lpf_fc, fs=fs)
-		b1, a1 = define_bessel_lpf(cutoff=lpf_fc, fs=fs, order=5)
-		# b2, a2 = define_fir_hpf(numtap=15, cutoff=hpf_fc, fs)
-		w, h = freqz(b0, a0, worN=3000000)
-		figf, axf = plt.subplots(1,1)
-		axf.plot(0.5*fs*w/np.pi, np.abs(h), 'b')
-		axf.plot(cutoff, 0.5*np.sqrt(2), 'ko')
-		axf.axvline(cutoff, color='k')
-		axf.set_xlim(0, 0.5*fs)
-		axf.set_title("Lowpass Filter Frequency Response")
-		axf.set_xlabel('Frequency [Hz]')
-		axf.grid()
-		figf.show()
-
-		# arrays to store average amplitudes and sigma (2 channels)
-		avg = np.zeros((nch,ncalc))
-		avg2 = np.zeros((nch,ncalc))
-		rms = np.zeros(nch)
-
-		# number of samples in 1ms window
-		l = int(int_time*fs)
-		npt = ncalc*l # averaging time for the phase. set to integer multiple of the integration window.
-
-		Ch = np.array([ChA[:npt], ChB[:npt]])
-
-		rad = Wo/fs*np.arange(l)
-		I_shift= np.sin(rad) 
-		Q_shift = np.cos(rad)
-
-		I=np.zeros(len(Ch[0]))
-		Q=np.zeros(len(Ch[0]))
-
-		for k in range(nch):
 	
-			for i in range(ncalc) :
-				# we do i+1 onward to avoid the first dataset being affected by the lowpass filter settling time.
-				# start = i+1*l
-				# stop = (i+2)*l
+	# this lowpass filter is for the digital downconversion
+	cutoff = lpf_fc
+	b0, a0 = define_fir_lpf(numtap=100, cutoff=lpf_fc, fs=fs)
+	# show the frequency magnitude response
+	w, h = freqz(b0, a0, worN=3000000)
+	figf, axf = plt.subplots(1,1)
+	axf.plot(0.5*fs*w/np.pi, np.abs(h), 'b')
+	axf.plot(cutoff, 0.5*np.sqrt(2), 'ko')
+	axf.axvline(cutoff, color='k')
+	axf.set_xlim(0, 0.5*fs)
+	axf.set_title("Lowpass Filter Frequency Response")
+	axf.set_xlabel('Frequency [Hz]')
+	axf.grid()
+	figf.show()
 
-				start = i*l
-				stop = (i+1)*l
+	# arrays to store average amplitudes and sigma (2 channels)
+	avg = np.zeros((nch,ncalc))
+	avg2 = np.zeros((nch,ncalc))
+	rms = np.zeros(nch)
 
-				# get binary data as int16, scale by adc lsb. even data -> channel A , odd data -> channel B.
-				# then multiply each 1ms window (of length l) by the sin and cos modulating terms.
-				# t represents the appropriate time values. finally, use a lowpass filter on this modulated data.
-				I[start:stop] = Ch[k][start:stop]*I_shift
-				Q[start:stop] = Ch[k][start:stop]*Q_shift
+	# number of samples in 1ms window
+	l = int(int_time*fs)
 
-			I_f = lfilter(b0, a0, I)
-			Q_f = lfilter(b0, a0, Q)
-		
+	# total number of datapoints
+	npt = ncalc*l
 
-			phase = np.arctan(I_f[:npt]/Q_f[:npt])	
-			avg_phase = np.mean(phase)
+	Ch = np.array([ChA[:npt], ChB[:npt]])
 
-			for i in range(ncalc) :
-				start = i*l
-				stop = (i+1)*l
-				# average amplitude recovered from I,Q components
-				a = 2*(Q_f[start:stop]*np.cos(avg_phase) + I_f[start:stop]*np.sin(avg_phase))
-				a2 = np.hypot(I_f[start:stop], Q_f[start:stop])
-				avg[k][i] = np.mean(a)
-				avg2[k][i] = np.mean(a2)
+	rad = Wo/fs*np.arange(npt)
+	I_shift= np.sin(rad) 
+	Q_shift = np.cos(rad)
 
-			# sigma of the distribution of average amplitudes		
-			rms[k] = np.std(avg[k])
-			print('sigma error =', rms[k])
+	I=np.zeros(len(Ch[0]))
+	Q=np.zeros(len(Ch[0]))
 
+	for k in range(nch):
 
+		I = Ch[k]*I_shift
+		Q = Ch[k]*Q_shift
+
+		I_f = lfilter(b0, a0, I)
+		Q_f = lfilter(b0, a0, Q)
 	
-		if plot_en :
-			plot_len = int(plot_len)
-			xaxis = np.arange(plot_len)
+		phase_npt = int(phase_time*fs)
+		phase = np.arctan(I_f[calc_off:phase_npt]/Q_f[calc_off:phase_npt])	
+		avg_phase = np.mean(phase)
 
-			# offset by a millisecond window worth of samples, the filters take time to settle so the first
-			# window shows transient effects we aren't interested in.
-			if plot_off : 
-				plt_start = int(1e-3*fs) 
-			else :
-				plt_start = 0
+		for i in range(ncalc) :
+			start = i*l + calc_off
+			stop = (i+1)*l
+			# average amplitude recovered from I,Q components
 
-			print('sample spacing =', Ts*1e9, 'nanoseconds')
+			# phase based reconstruction
+			a = 2*(Q_f[start:stop]*np.cos(avg_phase) + I_f[start:stop]*np.sin(avg_phase))
 
-			figA, axA = plt.subplots(1,1)
-			axA.set_xlabel('samples')
-			axA.set_ylabel('volts')
-			axA.set_title('adc channel A raw data')
-			
-			figB, axB = plt.subplots(1,1)
-			axB.set_xlabel('samples')
-			axB.set_ylabel('volts')
-			axB.set_title('adc channel B raw data')
+			# pythagorean reconstruction
+			a2 = np.hypot(I_f[start:stop], Q_f[start:stop])
+			avg[k][i] = np.mean(a)
+			avg2[k][i] = np.mean(a2)
 
 
-			fig1, ax1 = plt.subplots(1,1)	
-			ax1.set_xlabel('samples')
-			ax1.set_ylabel('amplitude')
-			ax1.set_title('I component')
-			
-			fig2, ax2 = plt.subplots(1,1)
-			ax2.set_xlabel('samples')
-			ax2.set_ylabel('amplitude')
-			ax2.set_title('Q component')
-			
-			fig3, ax3 = plt.subplots(1,1)
-			ax3.set_xlabel('samples')
-			ax3.set_ylabel('amplitude')
-			ax3.set_title('I component (filtered)')
-			
-			fig4, ax4 = plt.subplots(1,1)
-			ax4.set_xlabel('samples')
-			ax4.set_ylabel('amplitude')
-			ax4.set_title('Q component (filtered)')
-			
-			fig5, ax5 = plt.subplots(1,1)
-			ax5.set_xlabel('samples')
-			ax5.set_ylabel('amplitude')
-			ax5.set_title('Reconstructed Amplitude')
 
-			start = plt_start
-			stop = plt_start + plot_len
-			plot(ChA[:plot_len], x = xaxis, axis=axA)
-			# plot(ChB[:plotlen], x = xaxis, axis=axB)
-			plot(I[start:stop], x = xaxis, axis=ax1)
-			plot(Q[start:stop], x = xaxis, axis=ax2)
-			plot(I_f[start:stop], x = xaxis, axis=ax3)
-			plot(Q_f[start:stop], x = xaxis, axis=ax4)
-			plot(a[:stop], x = xaxis, axis=ax5)
 
-			
-			figA.show()
-			# figB.show()
-			fig1.show()
-			fig2.show()
-			fig3.show()
-			fig4.show()
-			fig5.show()
+	if plot_en :
 
-	if xcor :
-		r = [[min(avg[0]), max(avg[0])], [min(avg[1]), max(avg[1])]]
-		h, xbins, ybins = np.histogram2d(x=avg_A, y=avg_B, bins=None, range=r, normed=None)
-		figc, axc = plt.subplots(1,1)
 
+		off = int(plot_win*l)
+		plot_len = int(plot_len)
+		xaxis = np.arange(plot_len)
+
+		print('sample spacing =', Ts*1e9, 'nanoseconds')
+		begin = off
+		end = off + plot_len
+
+		figA, axA = plt.subplots(1,1)
+		axA.set_xlabel('samples')
+		axA.set_ylabel('volts')
+		axA.set_title('adc channel A raw data')
+		plot(ChA[begin:end], x = xaxis, axis=axA)
+		figA.show()
+
+		# figB, axB = plt.subplots(1,1)
+		# axB.set_xlabel('samples')
+		# axB.set_ylabel('volts')
+		# axB.set_title('adc channel B raw data')
+		# plot(ChB[begin:end], x = xaxis, axis=axB)
+		# figB.show()
+
+		fig1, ax1 = plt.subplots(1,1)	
+		ax1.set_xlabel('samples')
+		ax1.set_ylabel('amplitude')
+		ax1.set_title('I component')
+		plot(I[begin:end], x = xaxis, axis=ax1)
+		fig1.show()
+
+		fig2, ax2 = plt.subplots(1,1)
+		ax2.set_xlabel('samples')
+		ax2.set_ylabel('amplitude')
+		ax2.set_title('Q component')
+		plot(Q[begin:end], x = xaxis, axis=ax2)
+		fig2.show()
+
+		fig3, ax3 = plt.subplots(1,1)
+		ax3.set_xlabel('samples')
+		ax3.set_ylabel('amplitude')
+		ax3.set_title('I component (filtered)')
+		plot(I_f[begin:end], x = xaxis, axis=ax3)
+		fig3.show()
+
+		fig4, ax4 = plt.subplots(1,1)
+		ax4.set_xlabel('samples')
+		ax4.set_ylabel('amplitude')
+		ax4.set_title('Q component (filtered)')
+		plot(Q_f[begin:end], x = xaxis, axis=ax4)
+		fig4.show()
+		
+		# fig5, ax5 = plt.subplots(1,1)
+		# ax5.set_xlabel('samples')
+		# ax5.set_ylabel('amplitude')
+		# ax5.set_title('Reconstructed Amplitude')
+		# plot(a[begin:end], x = xaxis, axis=ax5)
+		# fig5.show()
 
 	return avg, avg2, rms
 	
