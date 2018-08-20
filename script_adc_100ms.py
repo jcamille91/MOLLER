@@ -1,6 +1,6 @@
 import pickle
 import numpy as np
-from scipy.fftpack import fft
+from scipy.fftpack import fft, rfft
 from scipy.integrate import trapz
 from scipy.signal import medfilt, butter, bessel, firwin, lfilter, freqz, decimate, periodogram, welch
 import matplotlib.pyplot as plt
@@ -189,34 +189,43 @@ def make_data(outfile, A, fo, fs, jitter_fs, int_time, n_window) :
 	argument = w_c*(n + np.random.normal(loc = 0, scale = t_j, size=len(n)))
 	carrier = A_c*np.cos(argument)
 
-def get_freq(data, fo_guess, ssb_bw_guess, fs, int_time, n_window, plot=False) :
+def get_freq(data, fs, fo_nominal, ssb_bw_guess, int_time, npt2n=False, plot=False) :
 
 	'''
 	'''
 
-	# the channel codes are converted to volts, unless 'raw=True'
-	N = int(fs*int_time)	# number of samples in integration window.
-
-	binwidth = int(1/int_time) # Hz
-	# this indexes the bins to get the desired frequency bins for integrating the phase noise
-	# index = np.linspace(int(int_bw[0]), int(int_bw[1]), int(int_bw[1]-int_bw[0])+1, dtype=int)
-
-	v = rfft(x=data[:N], n=None)
-
-	center = int(fo_guess*int_time)
-	left = center - int(ssb_guess*int_time)
-	right = center + int(ssb_guess*int_time)
+	if npt2n :
+		N = int(npt2n)
+		binwidth = fs/N
+		int_time = N/fs
+	else :
+		N = int(fs*int_time)	# number of samples in integration window.
+		binwidth = (1/int_time) # Hz
 	
-	tone_i = np.argmax(v[left:right])
+	bins, v = periodogram(x=data[:N], fs=fs, nfft=None, return_onesided=True, scaling='density')
+	tone_i = np.argmax(v)
+	# v = rfft(x=data[:N], n=None)
+	# v = np.abs(v)
+	# center = int(fo_nominal*int_time)
+	# left = center - int(ssb_bw_guess*int_time)
+	# right = center + int(ssb_bw_guess*int_time)
+	
+	# tone_i = np.argmax(v[left:right]) + left
+	# tone_i2 = np.argmax(v)
+
 	tone_f = tone_i*binwidth
 	# bins, power = periodogram(x=data[:N], fs=fs, nfft=None, return_onesided=True, scaling='density')
 	# tone_f = np.argmax(power)*binwidth
-
-	print(len(data[:N]), 'data points\n')
-	print(len(v), 'fft bins\n')
+	f_off = tone_f - fo_nominal
+	print(len(data[:N]), 'data points')
+	print(len(v), 'fft bins')
 	print('frequency resolution = ', binwidth,'Hz\n')
-	print('calculated frequency:', tone_a, 'Hz')
-	
+	# print('calculated frequency:', tone_f, 'Hz\n')
+	print('calculated frequency', tone_i2*binwidth/2)
+	print('frequency offset =', f_off)
+
+
+
 	
 
 
@@ -226,11 +235,12 @@ def get_freq(data, fo_guess, ssb_bw_guess, fs, int_time, n_window, plot=False) :
 
 		ax_A.set_xlim(1e6, 1e10)
 		ax_A.set_xscale('log')
-		#ax_A.set_yscale('log')
+		# ax_A.set_yscale('log')
 		ax_A.set_xlabel('Frequency (Hertz)')
 		ax_A.set_ylabel(r'$\frac{dBc}{Hz}$', rotation=0, fontsize=16)
 		ax_A.set_title('CH A Noise Spectral Density')
-		ax_A.step(fbins, 10*np.log10(2*np.square(v)/(N*binwidth))
+		# ax_A.step(fbins, 10*np.log10(2*np.square(v)/(N*binwidth)))
+		ax_A.step(fbins, 10*np.log10(v/np.max(v)))
 
 
 	
